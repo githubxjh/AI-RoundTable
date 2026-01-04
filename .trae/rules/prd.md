@@ -1,10 +1,10 @@
 # Project Name: AI RoundTable Extension (The Boardroom)
-
+文档内容和说明都用中文叙述
 ## 1. 项目概述 (Overview)
 我们要开发一个基于 Chrome Manifest V3 的浏览器插件，名为 **"AI RoundTable"** 。
 **核心理念：** 将浏览器变成一个“多模型董事会”。用户作为董事长，利用已登录的 Web 版 ChatGPT、Claude 等 AI 模型作为董事会成员，进行复杂的商业决策。
 **交互模式：** 非线性的“星型拓扑”控制台。支持广播提问、单独追问、提取观点（Quote）以及点对点/点对多的交叉辩论（Routing）。
-
+文档内容和说明都用中文叙述
 ## 2. 核心原则 (Core Principles)
 1.  **原生架构 (Vanilla Architecture)** :
     *  不使用 Webpack, Vite, React, Vue。
@@ -107,3 +107,4 @@
 *   **Tab Discovery** : Background script 需要在插件启动时，查询 ( `chrome.tabs.query` ) 是否存在匹配 `chatgpt.com` 和 `claude.ai` 的 Tab，并建立长连接。
 *   **Input Simulation** : 必须实现一个 `simulateUserInput(element, text)` 函数，能够触发 React/Vue 侦听的 `input`, `change`, `bubbles` 事件。
 *   **Observation** : 使用 `MutationObserver` 监听 DOM 变化以更新 SidePanel 的“最新回复摘要”。
+文档内容和说明都用中文叙述

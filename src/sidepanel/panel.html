@@ -370,7 +370,7 @@
             <label class="checkbox-label"><input type="checkbox" checked> Grok 3</label>
             <label class="checkbox-label"><input type="checkbox"> Gemini 2.0</label>
         </div>
-        <button class="btn" onclick="simulateBroadcast()">Broadcast (全部发送)</button>
+        <button class="btn">Broadcast (全部发送)</button>
     </div>
 
     <!-- 2. 中部：监控流 -->
@@ -396,15 +396,15 @@
             <!-- 问题提取区 -->
             <div class="question-alert">
                 <span>❓ <strong>AI 追问:</strong> "您的投资周期是多长？"</span>
-                <button class="question-btn" onclick="replyToQuestion('ChatGPT')">回复</button>
+                <button class="question-btn" data-model="ChatGPT">回复</button>
             </div>
 
             <div class="card-body">
                 我认为目前是买入良机。理由：1. 中东地缘政治紧张加剧；2. 冬季需求高峰即将来临；3. OPEC+ 可能会延长减产协议。建议在 $72 附近建仓...
             </div>
             <div class="card-actions">
-                <button class="btn-quote" onclick="quoteContent('ChatGPT', '我认为目前是买入良机...')">引用此观点</button>
-                <button class="btn-expand" onclick="openFullView('ChatGPT')" title="展开全屏/查看详情">⤢</button>
+                <button class="btn-quote" data-source="ChatGPT" data-text="我认为目前是买入良机。理由：1. 中东地缘政治紧张加剧；2. 冬季需求高峰即将来临；3. OPEC+ 可能会延长减产协议。建议在 $72 附近建仓...">引用此观点</button>
+                <button class="btn-expand" data-model="ChatGPT" title="展开全屏/查看详情">⤢</button>
             </div>
         </div>
 
@@ -429,8 +429,8 @@
                 (正在生成分析报告...) 考虑到全球经济衰退的风险，需求端可能疲软。历史数据显示，在高利率环境下，大宗商品往往...
             </div>
             <div class="card-actions">
-                <button class="btn-quote" onclick="quoteContent('Claude', '考虑到全球经济衰退的风险...')">引用此观点</button>
-                <button class="btn-expand" onclick="openFullView('Claude')" title="展开全屏/查看详情">⤢</button>
+                <button class="btn-quote" data-source="Claude" data-text="考虑到全球经济衰退的风险，需求端可能疲软。历史数据显示，在高利率环境下，大宗商品往往...">引用此观点</button>
+                <button class="btn-expand" data-model="Claude" title="展开全屏/查看详情">⤢</button>
             </div>
         </div>
 
@@ -453,15 +453,15 @@
             <!-- 问题提取区 -->
             <div class="question-alert">
                 <span>❓ <strong>AI 追问:</strong> "是否考虑突发战争风险？"</span>
-                <button class="question-btn" onclick="replyToQuestion('Grok')">回复</button>
+                <button class="question-btn" data-model="Grok">回复</button>
             </div>
 
             <div class="card-body">
                 [实时推流] 刚刚监测到红海区域有新的油轮遇袭报告。布伦特原油期货 5 分钟内跳涨 0.8%。请注意短期波动风险。
             </div>
             <div class="card-actions">
-                <button class="btn-quote" onclick="quoteContent('Grok', '刚刚监测到红海区域有新的油轮遇袭报告...')">引用此观点</button>
-                <button class="btn-expand" onclick="openFullView('Grok')" title="展开全屏/查看详情">⤢</button>
+                <button class="btn-quote" data-source="Grok" data-text="[实时推流] 刚刚监测到红海区域有新的油轮遇袭报告。布伦特原油期货 5 分钟内跳涨 0.8%。请注意短期波动风险。">引用此观点</button>
+                <button class="btn-expand" data-model="Grok" title="展开全屏/查看详情">⤢</button>
             </div>
         </div>
 
@@ -496,7 +496,7 @@
         
         <!-- 引用预览区 -->
         <div id="quote-preview">
-            <span class="close-quote" onclick="clearQuote()">×</span>
+            <span class="close-quote">×</span>
             <strong>Ref @<span id="quote-source">Source</span>:</strong> 
             <span id="quote-text">Content...</span>
         </div>
@@ -511,7 +511,7 @@
                     <label class="checkbox-label"><input type="checkbox" id="route-claude" checked> Claude</label>
                     <label class="checkbox-label"><input type="checkbox" id="route-grok"> Grok</label>
                 </div>
-                <button class="btn btn-route" onclick="simulateRoute()">Fire / Route</button>
+                <button class="btn btn-route">Fire / Route</button>
             </div>
         </div>
     </div>
@@ -521,7 +521,7 @@
         <div id="full-view-content">
             <div class="full-view-header">
                 <span id="full-view-title">ChatGPT - Full Session</span>
-                <button onclick="closeFullView()" style="border:none;background:none;font-size:16px;cursor:pointer;">✕ Close</button>
+                <button style="border:none;background:none;font-size:16px;cursor:pointer;">✕ Close</button>
             </div>
             <div class="full-view-body">
                 <p><strong>User:</strong> 分析目前石油市场的供需矛盾...</p>
@@ -534,76 +534,6 @@
         </div>
     </div>
 
-    <script>
-        // 简单的交互脚本，用于演示 UI 逻辑
-
-        const quotePreview = document.getElementById('quote-preview');
-        const quoteSource = document.getElementById('quote-source');
-        const quoteText = document.getElementById('quote-text');
-        const routerDock = document.getElementById('router-dock');
-        const fullViewModal = document.getElementById('full-view-modal');
-        const fullViewTitle = document.getElementById('full-view-title');
-
-        // 点击“引用”按钮
-        function quoteContent(source, text) {
-            quotePreview.style.display = 'block';
-            quoteSource.innerText = source;
-            quoteText.innerText = text;
-            
-            // 视觉反馈：底部区域高亮
-            routerDock.classList.add('router-active-border');
-            
-            // 自动聚焦到底部输入框
-            document.getElementById('router-input').focus();
-        }
-
-        // 清除引用
-        function clearQuote() {
-            quotePreview.style.display = 'none';
-            routerDock.classList.remove('router-active-border');
-        }
-
-        // 模拟广播发送
-        function simulateBroadcast() {
-            const btn = document.querySelector('#top-deck .btn');
-            const originalText = btn.innerText;
-            btn.innerText = 'Sending...';
-            btn.style.backgroundColor = '#6b7280';
-            setTimeout(() => {
-                btn.innerText = originalText;
-                btn.style.backgroundColor = '';
-                alert('已将带有【角色设定】的指令广播给选中的 AI！');
-            }, 500);
-        }
-
-        // 模拟路由发送
-        function simulateRoute() {
-            if (quotePreview.style.display === 'none') {
-                alert('请先在上方选择一个观点进行引用 (Click "Quote")');
-                return;
-            }
-            alert('已将引用内容 + 你的指令 发送给目标 AI！');
-            clearQuote();
-            document.getElementById('router-input').value = '';
-        }
-
-        // 全屏模式
-        function openFullView(modelName) {
-            fullViewTitle.innerText = `${modelName} - Full Session View`;
-            fullViewModal.style.display = 'flex';
-        }
-
-        function closeFullView() {
-            fullViewModal.style.display = 'none';
-        }
-
-        // 回复问题
-        function replyToQuestion(modelName) {
-            const reply = prompt(`回复 ${modelName} 的追问:`);
-            if (reply) {
-                alert(`已单独发送给 ${modelName}: "${reply}"`);
-            }
-        }
-    </script>
+    <script type="module" src="panel.js"></script>
 </body>
 </html>
