@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "AI RoundTable",
+  "version": "1.0",
+  "description": "Turn your browser into a multi-model boardroom.",
+  "permissions": [
+    "sidePanel",
+    "tabs",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://claude.ai/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service_worker.js"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/panel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_gpt.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_claude.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Boardroom Control Panel</title>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --primary-color: #2563eb;
+            --danger-color: #dc2626;
+            --success-color: #16a34a;
+            --warning-bg: #fffbeb;
+            --warning-text: #b45309;
+            --text-main: #1f2937;
+            --text-sub: #6b7280;
+            --border-color: #e5e7eb;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            font-size: 13px;
+        }
+
+        /* --- 1. 顶部指挥区 --- */
+        #top-deck {
+            background: var(--card-bg);
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            flex-shrink: 0;
+            z-index: 10;
+        }
+
+        .section-title {
+            font-weight: 600;
+            color: var(--text-sub);
+            margin-bottom: 8px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .target-selector {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            font-weight: 500;
+        }
+
+        .checkbox-label input {
+            margin-right: 4px;
+        }
+
+        textarea.main-input {
+            width: 100%;
+            height: 60px;
+            padding: 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            resize: none;
+            font-family: inherit;
+            margin-bottom: 8px;
+        }
+
+        textarea.main-input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            width: 100%;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background-color: #1d4ed8;
+        }
+
+        /* --- 2. 中部监控区 --- */
+        #monitor-stream {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .ai-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .ai-card:hover {
+            border-color: var(--primary-color);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start; /* 改为顶部对齐以适应下拉菜单 */
+            margin-bottom: 8px;
+        }
+
+        .header-left {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .model-name {
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+        }
+
+        /* 角色选择器样式 */
+        .role-select {
+            font-size: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 2px 4px;
+            color: var(--text-sub);
+            background: #f9fafb;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #d1d5db;
+        }
+        .status-dot.active { background-color: var(--success-color); box-shadow: 0 0 4px var(--success-color); }
+        .status-dot.thinking { background-color: #f59e0b; animation: pulse 1s infinite; }
+
+        .card-body {
+            font-size: 12px;
+            color: var(--text-sub);
+            line-height: 1.5;
+            margin-bottom: 8px;
+            /* 摘要模式 */
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* 问题提取高亮区 */
+        .question-alert {
+            background-color: var(--warning-bg);
+            border: 1px solid #fcd34d;
+            color: var(--warning-text);
+            padding: 6px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .question-btn {
+            background: #fff;
+            border: 1px solid #fcd34d;
+            color: var(--warning-text);
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .card-actions {
+            display: flex;
+            justify-content: space-between; /* 两端对齐 */
+            align-items: center;
+            border-top: 1px solid #f3f4f6;
+            padding-top: 8px;
+        }
+
+        .btn-quote {
+            background: #eff6ff;
+            color: var(--primary-color);
+            border: 1px solid #bfdbfe;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .btn-quote:hover {
+            background: #dbeafe;
+        }
+
+        .btn-expand {
+            background: transparent;
+            border: none;
+            color: var(--text-sub);
+            cursor: pointer;
+            padding: 4px;
+            font-size: 14px;
+        }
+        .btn-expand:hover { color: var(--text-main); }
+
+        /* --- 3. 底部路由区 --- */
+        #router-dock {
+            background: #fff;
+            border-top: 2px solid var(--border-color);
+            padding: 12px;
+            flex-shrink: 0;
+        }
+
+        .router-active-border {
+            border-top-color: var(--primary-color) !important;
+        }
+
+        #quote-preview {
+            background: #f3f4f6;
+            padding: 8px;
+            border-radius: 4px;
+            border-left: 3px solid var(--primary-color);
+            margin-bottom: 8px;
+            font-size: 11px;
+            color: #4b5563;
+            display: none;
+            position: relative;
+        }
+
+        .close-quote {
+            position: absolute;
+            top: 2px;
+            right: 4px;
+            cursor: pointer;
+            color: #9ca3af;
+            font-weight: bold;
+        }
+
+        .router-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .router-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .router-targets {
+            display: flex;
+            gap: 8px;
+            font-size: 11px;
+        }
+
+        .btn-route {
+            background: var(--text-main);
+            color: white;
+            width: auto;
+            flex: 1;
+        }
+
+        /* 全屏模式模拟遮罩 */
+        #full-view-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0,0,0,0.5);
+            z-index: 100;
+            display: none;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #full-view-content {
+            width: 90%;
+            height: 90%;
+            background: #fff;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .full-view-header {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+        }
+
+        .full-view-body {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #f9fafb;
+            font-size: 14px;
+        }
+
+        /* 动画 */
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .tag {
+            background: #e5e7eb;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 10px;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 1. 顶部：全局广播 -->
+    <div id="top-deck">
+        <div class="section-title">
+            <span>Global Command</span>
+            <span class="tag">Boardroom Mode</span>
+        </div>
+        <textarea class="main-input" placeholder="输入指令，例如：'分析目前石油市场的供需矛盾'"></textarea>
+        <div class="target-selector">
+            <label class="checkbox-label"><input type="checkbox" checked> GPT-4o</label>
+            <label class="checkbox-label"><input type="checkbox" checked> Claude 3.5</label>
+            <label class="checkbox-label"><input type="checkbox" checked> Grok 3</label>
+            <label class="checkbox-label"><input type="checkbox"> Gemini 2.0</label>
+        </div>
+        <button class="btn" onclick="simulateBroadcast()">Broadcast (全部发送)</button>
+    </div>
+
+    <!-- 2. 中部：监控流 -->
+    <div id="monitor-stream">
+        
+        <!-- 卡片 1: GPT (战略专家) -->
+        <div class="ai-card" id="card-gpt">
+            <div class="card-header">
+                <div class="header-left">
+                    <div class="model-name">
+                        <div class="status-dot active"></div>
+                        ChatGPT
+                    </div>
+                    <select class="role-select">
+                        <option selected>战略分析师 (Strategy)</option>
+                        <option>风险控制 (Risk)</option>
+                        <option>宏观经济 (Macro)</option>
+                    </select>
+                </div>
+                <span class="tag">做多派</span>
+            </div>
+            
+            <!-- 问题提取区 -->
+            <div class="question-alert">
+                <span>❓ <strong>AI 追问:</strong> "您的投资周期是多长？"</span>
+                <button class="question-btn" onclick="replyToQuestion('ChatGPT')">回复</button>
+            </div>
+
+            <div class="card-body">
+                我认为目前是买入良机。理由：1. 中东地缘政治紧张加剧；2. 冬季需求高峰即将来临；3. OPEC+ 可能会延长减产协议。建议在 $72 附近建仓...
+            </div>
+            <div class="card-actions">
+                <button class="btn-quote" onclick="quoteContent('ChatGPT', '我认为目前是买入良机...')">引用此观点</button>
+                <button class="btn-expand" onclick="openFullView('ChatGPT')" title="展开全屏/查看详情">⤢</button>
+            </div>
+        </div>
+
+        <!-- 卡片 2: Claude (风控专家) -->
+        <div class="ai-card" id="card-claude">
+            <div class="card-header">
+                <div class="header-left">
+                    <div class="model-name">
+                        <div class="status-dot thinking"></div>
+                        Claude
+                    </div>
+                    <select class="role-select">
+                        <option>战略分析师 (Strategy)</option>
+                        <option selected>风险控制 (Risk)</option>
+                        <option>历史数据 (History)</option>
+                    </select>
+                </div>
+                <span class="tag">思考中...</span>
+            </div>
+            
+            <div class="card-body">
+                (正在生成分析报告...) 考虑到全球经济衰退的风险，需求端可能疲软。历史数据显示，在高利率环境下，大宗商品往往...
+            </div>
+            <div class="card-actions">
+                <button class="btn-quote" onclick="quoteContent('Claude', '考虑到全球经济衰退的风险...')">引用此观点</button>
+                <button class="btn-expand" onclick="openFullView('Claude')" title="展开全屏/查看详情">⤢</button>
+            </div>
+        </div>
+
+        <!-- 卡片 3: Grok (实时数据) -->
+        <div class="ai-card" id="card-grok" style="border-left: 3px solid #000;">
+            <div class="card-header">
+                <div class="header-left">
+                    <div class="model-name">
+                        <div class="status-dot active"></div>
+                        Grok 3
+                    </div>
+                    <select class="role-select">
+                        <option selected>实时数据 (Real-time)</option>
+                        <option>推特舆情 (Sentiment)</option>
+                    </select>
+                </div>
+                <span class="tag">数据流</span>
+            </div>
+            
+            <!-- 问题提取区 -->
+            <div class="question-alert">
+                <span>❓ <strong>AI 追问:</strong> "是否考虑突发战争风险？"</span>
+                <button class="question-btn" onclick="replyToQuestion('Grok')">回复</button>
+            </div>
+
+            <div class="card-body">
+                [实时推流] 刚刚监测到红海区域有新的油轮遇袭报告。布伦特原油期货 5 分钟内跳涨 0.8%。请注意短期波动风险。
+            </div>
+            <div class="card-actions">
+                <button class="btn-quote" onclick="quoteContent('Grok', '刚刚监测到红海区域有新的油轮遇袭报告...')">引用此观点</button>
+                <button class="btn-expand" onclick="openFullView('Grok')" title="展开全屏/查看详情">⤢</button>
+            </div>
+        </div>
+
+        <!-- 卡片 4: Gemini (通用/备用) -->
+        <div class="ai-card" id="card-gemini">
+            <div class="card-header">
+                <div class="header-left">
+                    <div class="model-name">
+                        <div class="status-dot"></div>
+                        Gemini
+                    </div>
+                    <select class="role-select">
+                        <option selected>通用助手 (General)</option>
+                    </select>
+                </div>
+                <span class="tag">Idle</span>
+            </div>
+            <div class="card-body" style="color:#9ca3af; font-style:italic;">
+                等待指令...
+            </div>
+            <div class="card-actions">
+                <button class="btn-quote" disabled>无内容</button>
+                <button class="btn-expand" disabled>⤢</button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- 3. 底部：路由区 -->
+    <div id="router-dock">
+        <div class="section-title">Router Dock (交叉讨论)</div>
+        
+        <!-- 引用预览区 -->
+        <div id="quote-preview">
+            <span class="close-quote" onclick="clearQuote()">×</span>
+            <strong>Ref @<span id="quote-source">Source</span>:</strong> 
+            <span id="quote-text">Content...</span>
+        </div>
+
+        <div class="router-controls">
+            <textarea class="main-input" id="router-input" placeholder="针对引用内容的指令... (例如: '请反驳这个观点')" style="height: 45px;"></textarea>
+            
+            <div class="router-actions">
+                <div class="router-targets">
+                    <span>Send to:</span>
+                    <label class="checkbox-label"><input type="checkbox" id="route-gpt"> GPT</label>
+                    <label class="checkbox-label"><input type="checkbox" id="route-claude" checked> Claude</label>
+                    <label class="checkbox-label"><input type="checkbox" id="route-grok"> Grok</label>
+                </div>
+                <button class="btn btn-route" onclick="simulateRoute()">Fire / Route</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模拟全屏 Modal -->
+    <div id="full-view-modal">
+        <div id="full-view-content">
+            <div class="full-view-header">
+                <span id="full-view-title">ChatGPT - Full Session</span>
+                <button onclick="closeFullView()" style="border:none;background:none;font-size:16px;cursor:pointer;">✕ Close</button>
+            </div>
+            <div class="full-view-body">
+                <p><strong>User:</strong> 分析目前石油市场的供需矛盾...</p>
+                <br>
+                <p><strong>AI (Strategy Mode):</strong></p>
+                <p>这里将显示完整的 HTML 渲染内容或 iframe。</p>
+                <p>...</p>
+                <p>（此处省略 2000 字详细报告）</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 简单的交互脚本，用于演示 UI 逻辑
+
+        const quotePreview = document.getElementById('quote-preview');
+        const quoteSource = document.getElementById('quote-source');
+        const quoteText = document.getElementById('quote-text');
+        const routerDock = document.getElementById('router-dock');
+        const fullViewModal = document.getElementById('full-view-modal');
+        const fullViewTitle = document.getElementById('full-view-title');
+
+        // 点击“引用”按钮
+        function quoteContent(source, text) {
+            quotePreview.style.display = 'block';
+            quoteSource.innerText = source;
+            quoteText.innerText = text;
+            
+            // 视觉反馈：底部区域高亮
+            routerDock.classList.add('router-active-border');
+            
+            // 自动聚焦到底部输入框
+            document.getElementById('router-input').focus();
+        }
+
+        // 清除引用
+        function clearQuote() {
+            quotePreview.style.display = 'none';
+            routerDock.classList.remove('router-active-border');
+        }
+
+        // 模拟广播发送
+        function simulateBroadcast() {
+            const btn = document.querySelector('#top-deck .btn');
+            const originalText = btn.innerText;
+            btn.innerText = 'Sending...';
+            btn.style.backgroundColor = '#6b7280';
+            setTimeout(() => {
+                btn.innerText = originalText;
+                btn.style.backgroundColor = '';
+                alert('已将带有【角色设定】的指令广播给选中的 AI！');
+            }, 500);
+        }
+
+        // 模拟路由发送
+        function simulateRoute() {
+            if (quotePreview.style.display === 'none') {
+                alert('请先在上方选择一个观点进行引用 (Click "Quote")');
+                return;
+            }
+            alert('已将引用内容 + 你的指令 发送给目标 AI！');
+            clearQuote();
+            document.getElementById('router-input').value = '';
+        }
+
+        // 全屏模式
+        function openFullView(modelName) {
+            fullViewTitle.innerText = `${modelName} - Full Session View`;
+            fullViewModal.style.display = 'flex';
+        }
+
+        function closeFullView() {
+            fullViewModal.style.display = 'none';
+        }
+
+        // 回复问题
+        function replyToQuestion(modelName) {
+            const reply = prompt(`回复 ${modelName} 的追问:`);
+            if (reply) {
+                alert(`已单独发送给 ${modelName}: "${reply}"`);
+            }
+        }
+    </script>
+</body>
+</html>
