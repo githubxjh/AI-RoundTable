@@ -2,10 +2,14 @@
 class GrokAdapter extends AdapterBase {
     constructor() {
         super('Grok');
+        this.lastPrompt = '';
+        this.previousContent = '';
     }
 
     async handleInput(text) {
         console.log("GrokAdapter: handleInput called");
+        this.lastPrompt = text; // Save for filtering
+
         try {
             await super.handleInput(text);
         } catch (e) {
@@ -18,7 +22,6 @@ class GrokAdapter extends AdapterBase {
             const inputEl = document.querySelector(inputSelector);
             if (inputEl) {
                 console.log("GrokAdapter: Dispatching Enter key...");
-                // TipTap/ProseMirror often handles Enter on keydown
                 inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13, which: 13 }));
                 inputEl.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13, which: 13 }));
                 inputEl.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13, which: 13 }));
@@ -27,8 +30,6 @@ class GrokAdapter extends AdapterBase {
     }
 
     getInputSelector() {
-        // Updated selectors based on debug logs
-        // The input is a .ProseMirror div
         return `
             div.ProseMirror[contenteditable="true"],
             div[contenteditable="true"].tiptap,
@@ -38,8 +39,6 @@ class GrokAdapter extends AdapterBase {
     }
 
     getSendBtnSelector() {
-        // X.com send buttons
-        // Try to find button with aria-label containing "Send" or SVG path
         return `
             button[aria-label="Grok"], 
             button[aria-label="Grok something"],
@@ -51,39 +50,75 @@ class GrokAdapter extends AdapterBase {
         `.replace(/\s+/g, ' ').trim();
     }
 
-    checkForNewResponse() {
-        // Grok responses on x.com
-        // Need to identify the message bubbles.
-        
-        const messageSelector = 'div[data-testid="grokMessage"]'; // Hypothetical selector
-        const messages = document.querySelectorAll(messageSelector);
-        
-        if (messages.length === 0) return;
-        
-        const lastMessage = messages[messages.length - 1];
-        const currentText = lastMessage.innerText;
-
-        // Check generation status
-        // Grok usually streams. 
-        // We can check if the text is growing or if there's a specific "Stop" button.
-        const stopBtn = document.querySelector('button[aria-label="Stop"]');
-        const isGenerating = !!stopBtn; // Or use text length change heuristic
-
-        if (this.isGenerating !== isGenerating) {
-            this.isGenerating = isGenerating;
-            this.sendUpdate(isGenerating ? 'generating' : 'idle', currentText.substring(0, 150) + '...');
+    getLastMessageText() {
+        // Helper to get the very last message text in the stream (User or AI)
+        const articles = document.querySelectorAll('article[data-testid="tweet"]');
+        if (articles.length > 0) {
+            const lastArticle = articles[articles.length - 1];
+            const textEl = lastArticle.querySelector('div[data-testid="tweetText"]');
+            if (textEl) return textEl.innerText;
         }
-
-        if (isGenerating && Math.abs(currentText.length - this.lastResponseLength) > 50) {
-            this.lastResponseLength = currentText.length;
-            this.sendUpdate('generating', currentText.substring(0, 150) + '...');
+        
+        // Fallback
+        const messages = document.querySelectorAll('div[data-testid="tweetText"], .grok-message-content');
+        if (messages.length > 0) {
+            return messages[messages.length - 1].innerText;
         }
+        return '';
     }
-    
+
     onSendPostProcessing() {
+        // Capture the state of the stream *before* (or right as) we send
+        this.previousContent = this.getLastMessageText();
+        
         this.lastResponseLength = 0;
         this.isGenerating = true;
+        this.expectingNewMessage = true;
         this.sendUpdate('generating', 'Waiting for response...');
+    }
+
+    checkForNewResponse() {
+        const currentText = this.getLastMessageText();
+        
+        if (!currentText) return;
+
+        // Check generation status
+        const stopBtn = document.querySelector('button[aria-label="Stop"], button[aria-label="Stop generating"]');
+        const isGenerating = !!stopBtn;
+
+        if (this.expectingNewMessage && !isGenerating) {
+            // 1. Check if it's the same as before we started
+            if (currentText === this.previousContent) return;
+
+            // 2. Check if it's just our own prompt (Optimistic UI or echoing)
+            // Use loose matching to handle whitespace/markdown differences
+            if (currentText.trim().includes(this.lastPrompt.trim()) && currentText.length < this.lastPrompt.length + 50) {
+                // Likely just the user prompt
+                return;
+            }
+
+            // It's different from previous, and not our prompt. Must be the new answer!
+            this.expectingNewMessage = false;
+        }
+
+        if (isGenerating) {
+            this.expectingNewMessage = false;
+            if (this.isGenerating !== isGenerating) {
+                this.isGenerating = isGenerating;
+            }
+            if (currentText !== this.lastSentContent) {
+                this.lastSentContent = currentText;
+                this.sendUpdate('generating', currentText);
+            }
+        } else {
+             if (this.isGenerating || !this.expectingNewMessage) {
+                 this.isGenerating = false;
+                 if (currentText !== this.lastSentContent) {
+                     this.lastSentContent = currentText;
+                     this.sendUpdate('idle', currentText);
+                 }
+             }
+        }
     }
 }
 

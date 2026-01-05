@@ -176,12 +176,6 @@ class AdapterBase {
                 // reject(new Error(`Timeout waiting for ${selector}`));
                 // Don't reject, just return null to avoid crashing everything, let caller handle
                 console.warn(`Timeout waiting for ${selector}`);
-                
-                // Debug: Log all textareas and contenteditables
-                console.log("Debug: Available inputs:");
-                document.querySelectorAll('textarea').forEach(el => console.log('textarea:', el, el.className, el.id));
-                document.querySelectorAll('[contenteditable="true"]').forEach(el => console.log('contenteditable:', el, el.className, el.id));
-                
                 resolve(null);
             }, timeout);
         });

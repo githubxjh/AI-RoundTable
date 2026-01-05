@@ -18,46 +18,68 @@ class ClaudeAdapter extends AdapterBase {
         return 'button[aria-label*="Send"], button[aria-label*="send"], div[contenteditable="true"] ~ div button';
     }
 
+    onSendPostProcessing() {
+        this.lastResponseLength = 0;
+        this.isGenerating = true;
+        this.sendUpdate('generating', 'Waiting for response...');
+    }
+
     checkForNewResponse() {
         // Claude's DOM is complex and changes.
         // We look for the last message bubble.
         
         // Try multiple selectors for robustness
-        const messageSelector = '.font-claude-message, [data-test-id="chat-message-content"]';
+        const messageSelector = '.font-claude-message, [data-test-id="chat-message-content"], div[data-is-streaming="true"]';
         const messages = document.querySelectorAll(messageSelector);
         
         if (messages.length === 0) return;
         
         const lastMessage = messages[messages.length - 1];
-        const currentText = lastMessage.innerText;
-
-        // Detect if "Stop" button is present to determine if generating
-        // This is a heuristic: If there is a button that looks like a stop button
-        // (Often has a square icon or specific class)
-        // For now, we use a text length heuristic if we can't find the button.
         
-        const isGenerating = currentText.length > this.lastResponseLength;
+        // Extract text but exclude thought process
+        let currentText = "";
+        
+        // Clone the node to manipulate it without affecting the DOM
+        const clone = lastMessage.cloneNode(true);
+        
+        // Remove thought blocks if any (usually .font-claude-thought or similar)
+        // Adjust selector based on inspection
+        const thoughts = clone.querySelectorAll('.font-claude-thought, [data-test-id="thought-process"]');
+        thoughts.forEach(el => el.remove());
+        
+        currentText = clone.innerText;
+
+        // Refined generating detection
+        // 1. Length changed?
+        const lengthChanged = currentText.length > this.lastResponseLength;
+        
+        // 2. Stop button visible? (Heuristic)
+        // Claude usually puts stop button in the input area
+        const stopBtn = document.querySelector('button[aria-label="Stop response"]');
+        
+        // 3. Or just trust our own state if length is growing
+        const isGenerating = !!stopBtn || lengthChanged;
 
         if (isGenerating) {
             this.lastResponseLength = currentText.length;
             this.isGenerating = true;
-            this.sendUpdate('generating', currentText.substring(0, 150) + '...');
+            this.sendUpdate('generating', currentText);
         } else {
-            // If it was generating and now stopped (and length > 0)
-            if (this.isGenerating) {
-                 // Maybe finished?
-                 // Let's assume if it hasn't changed for a few ticks it's done, 
-                 // but for now we just report the text.
-                 this.sendUpdate('idle', currentText.substring(0, 150) + '...');
-            }
-            this.isGenerating = false;
+             // If length hasn't changed
+             // Check if the "Send" button is visible/enabled?
+             // If Send button is visible, we are likely done.
+             const sendBtn = document.querySelector(this.getSendBtnSelector());
+             const isSendVisible = sendBtn && !sendBtn.disabled;
+             
+             if (this.isGenerating && isSendVisible) {
+                 this.isGenerating = false;
+                 this.sendUpdate('idle', currentText);
+             } else if (this.isGenerating) {
+                 // Still generating but no new text this tick?
+                 // Just update status
+                 this.sendUpdate('generating', currentText);
+             }
         }
-    }
-    
-    onSendPostProcessing() {
-        this.lastResponseLength = 0;
-        this.isGenerating = true;
-        this.sendUpdate('generating', 'Waiting for response...');
     }
 }
 

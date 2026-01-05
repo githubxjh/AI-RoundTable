@@ -2,22 +2,19 @@
 class GeminiAdapter extends AdapterBase {
     constructor() {
         super('Gemini');
+        this.previousContent = '';
     }
 
     async handleInput(text) {
         console.log("GeminiAdapter: handleInput called");
         
-        // Use base input handling first to set text
         try {
             await super.handleInput(text);
         } catch (e) {
             console.error("GeminiAdapter: Base handleInput failed, trying fallback", e);
         }
         
-        // Extra robustness: Trigger Enter key if button click didn't work (which is handled in super but maybe needs delay)
-        // Or if send button is still present and active?
-        // Let's just proactively hit Enter after a short delay as a backup
-        
+        // Fallback Enter key
         setTimeout(() => {
             const inputSelector = this.getInputSelector();
             const inputEl = document.querySelector(inputSelector);
@@ -27,55 +24,69 @@ class GeminiAdapter extends AdapterBase {
                 inputEl.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13 }));
                 inputEl.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13 }));
             }
-        }, 1200); // Wait for base click to happen first (base waits 800ms)
+        }, 1200); 
     }
 
     getInputSelector() {
-        // Enhanced selectors for Gemini
         return 'div.ql-editor, div[contenteditable="true"][role="textbox"], div[aria-label="Enter a prompt here"], div[aria-label*="prompt"]';
     }
 
     getSendBtnSelector() {
-        // Enhanced selectors for Send button
         return 'button[aria-label="Send message"], button[aria-label="Send"], button.send-button, mat-icon[data-mat-icon-name="send"]';
     }
 
-    checkForNewResponse() {
-        // Gemini response structure
-        // Often in <model-response> or similar custom elements, or simple markdown divs
-        // We look for the last response container.
-        
-        // This selector is a guess based on common Google web app patterns, needs verification
-        const messageSelector = '.model-response-text, .response-container-content';
+    onSendPostProcessing() {
+        // Capture previous content
+        const messageSelector = '.model-response-text, .response-container-content, message-content';
         const messages = document.querySelectorAll(messageSelector);
-        
-        // Fallback: Try finding by role="log" or similar if specific classes fail
-        // But for now let's assume we might need to update this after user testing.
+        this.previousContent = messages.length > 0 ? messages[messages.length - 1].innerText : '';
+
+        this.lastResponseLength = 0;
+        this.isGenerating = true;
+        this.expectingNewMessage = true;
+        this.sendUpdate('generating', 'Waiting for response...');
+    }
+
+    checkForNewResponse() {
+        const messageSelector = '.model-response-text, .response-container-content, message-content';
+        const messages = document.querySelectorAll(messageSelector);
         
         if (messages.length === 0) return;
         
         const lastMessage = messages[messages.length - 1];
         const currentText = lastMessage.innerText;
 
-        // Generating detection: Check for stop button or "Thinking..." indicator
-        const stopBtn = document.querySelector('button[aria-label="Stop generating"]');
+        // Generating detection
+        const stopBtn = document.querySelector('button[aria-label*="Stop"]');
         const isGenerating = !!stopBtn;
 
-        if (this.isGenerating !== isGenerating) {
-            this.isGenerating = isGenerating;
-            this.sendUpdate(isGenerating ? 'generating' : 'idle', currentText.substring(0, 150) + '...');
+        // Stale check
+        if (this.expectingNewMessage && !isGenerating) {
+             // If content matches previous, it's stale.
+             if (currentText === this.previousContent) return; 
+             
+             // Content changed! It's new.
+             this.expectingNewMessage = false;
         }
 
-        if (isGenerating && Math.abs(currentText.length - this.lastResponseLength) > 50) {
-            this.lastResponseLength = currentText.length;
-            this.sendUpdate('generating', currentText.substring(0, 150) + '...');
+        if (isGenerating) {
+            this.expectingNewMessage = false;
+            if (this.isGenerating !== isGenerating) {
+                this.isGenerating = isGenerating;
+            }
+            if (currentText !== this.lastSentContent) {
+                this.lastSentContent = currentText;
+                this.sendUpdate('generating', currentText);
+            }
+        } else {
+             if (this.isGenerating || !this.expectingNewMessage) {
+                this.isGenerating = false;
+                if (currentText !== this.lastSentContent) {
+                    this.lastSentContent = currentText;
+                    this.sendUpdate('idle', currentText);
+                }
+            }
         }
-    }
-    
-    onSendPostProcessing() {
-        this.lastResponseLength = 0;
-        this.isGenerating = true;
-        this.sendUpdate('generating', 'Waiting for response...');
     }
 }
 
