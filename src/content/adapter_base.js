@@ -47,12 +47,24 @@ class AdapterBase {
             const sendBtn = document.querySelector(sendBtnSelector);
             if (sendBtn) {
                 console.log("Clicking send button...");
-                sendBtn.click();
+                this.simulateClick(sendBtn);
                 this.onSendPostProcessing();
             } else {
                 console.warn("Send button not found:", sendBtnSelector);
             }
         }, 800);
+    }
+
+    simulateClick(element) {
+        const events = ['mousedown', 'mouseup', 'click'];
+        events.forEach(eventType => {
+            const event = new MouseEvent(eventType, {
+                bubbles: true,
+                cancelable: true,
+                view: window
+            });
+            element.dispatchEvent(event);
+        });
     }
 
     simulateUserInput(element, text) {
@@ -61,8 +73,25 @@ class AdapterBase {
 
         if (element.contentEditable === 'true' || element.getAttribute('contenteditable') === 'true') {
             // Handle contenteditable (like Claude)
-            element.innerHTML = ''; // Clear first
-            element.textContent = text; // Or insert text node
+            // Fix: Clear using innerHTML but insert text node to preserve formatting structure if needed
+            // But for simple text input, this is often sufficient.
+            // IMPORTANT: Some editors need focus event sequence
+            
+            element.innerHTML = '';
+            
+            // Dispatch input event for clearing
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+
+            // Insert text
+            // Note: document.execCommand('insertText') is deprecated but still widely supported and mimics user typing better
+            // than setting textContent for some editors.
+            // Let's try execCommand first as it's more "native" for contentEditable
+            
+            if (document.queryCommandSupported('insertText')) {
+                document.execCommand('insertText', false, text);
+            } else {
+                element.textContent = text;
+            }
             
             const inputEvent = new Event('input', { bubbles: true });
             element.dispatchEvent(inputEvent);

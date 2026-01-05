@@ -13,7 +13,7 @@ let activeTabs = {
 const MODEL_URLS = {
     'ChatGPT': 'chatgpt.com',
     'Claude': 'claude.ai',
-    'Grok': 'x.com/i/grok', // Assuming Grok URL
+    'Grok': 'grok.com', 
     'Gemini': 'gemini.google.com'
 };
 
@@ -43,6 +43,13 @@ async function handleMessage(message) {
             return await routeMessage(message);
         case 'REPLY_QUESTION':
             return await sendToModel(message.model, message.text);
+        case 'STATUS_UPDATE':
+            // Forward to all parts of the extension (e.g., SidePanel)
+            // Note: runtime.sendMessage sends to popup/options/sidepanel pages, not content scripts
+            chrome.runtime.sendMessage(message).catch(() => {
+                // Ignore error if no listeners (e.g. sidepanel closed)
+            });
+            return { status: 'status_forwarded' };
         default:
             return { status: 'unknown_type' };
     }

@@ -5,12 +5,17 @@ class ClaudeAdapter extends AdapterBase {
     }
 
     getInputSelector() {
-        return 'div[contenteditable="true"]';
+        // Updated selector for Claude
+        // Try to match the contenteditable div in the main input area
+        return 'div[contenteditable="true"].ProseMirror'; 
     }
 
     getSendBtnSelector() {
-        // Claude 3.5 Sonnet UI often uses this
-        return 'button[aria-label="Send Message"]';
+        // Updated selector for Claude
+        // Look for button that contains "Send" or SVG icon
+        // Often it has a specific aria-label
+        // Also try to find the button near the input
+        return 'button[aria-label*="Send"], button[aria-label*="send"], div[contenteditable="true"] ~ div button';
     }
 
     checkForNewResponse() {
