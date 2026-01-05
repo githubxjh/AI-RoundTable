@@ -97,22 +97,25 @@ async function routeMessage(message) {
     // Logic: Combine quote + instruction
     const prompt = `
 [引用观点 / Reference]
-Source: ${message.source}
-Content: "${message.quote}"
+${message.quote}
 
 [指令 / Instruction]
 ${message.instruction}
     `.trim();
 
-    // In the future, 'message' could contain specific targets. 
-    // For now, let's assume we want to send to Claude as per the demo default, 
-    // or we can parse targets from the message if the UI sent them.
-    // The current UI mock sends generic 'ROUTE', but we can assume it means "send to others".
-    // For this implementation, I'll send to ALL OTHER models except the source.
+    // Use explicit targets from message if available
+    const targetModels = message.targets || [];
     
     const promises = [];
     for (const [model, tabId] of Object.entries(activeTabs)) {
-        if (tabId && model !== message.source) {
+        // Send if:
+        // 1. Tab exists
+        // 2. Model is in the target list (OR if no targets specified, exclude source - fallback)
+        const shouldSend = targetModels.length > 0 
+            ? targetModels.includes(model)
+            : model !== message.source;
+
+        if (tabId && shouldSend) {
              promises.push(sendMessageToTab(tabId, { type: 'INPUT_PROMPT', text: prompt, model: model }));
         }
     }

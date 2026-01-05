@@ -243,25 +243,65 @@
             border-top-color: var(--primary-color) !important;
         }
 
-        #quote-preview {
-            background: #f3f4f6;
-            padding: 8px;
-            border-radius: 4px;
-            border-left: 3px solid var(--primary-color);
+        #quote-list {
             margin-bottom: 8px;
-            font-size: 11px;
-            color: #4b5563;
-            display: none;
-            position: relative;
+            max-height: 150px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
         }
 
-        .close-quote {
+        .quote-item {
+            background: #f3f4f6;
+            padding: 6px 8px;
+            border-radius: 4px;
+            border-left: 3px solid var(--primary-color);
+            font-size: 11px;
+            color: #4b5563;
+            position: relative;
+            animation: fadeIn 0.2s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .quote-item .close-btn {
             position: absolute;
-            top: 2px;
+            top: 4px;
             right: 4px;
             cursor: pointer;
             color: #9ca3af;
             font-weight: bold;
+            line-height: 1;
+        }
+        
+        .quote-item .close-btn:hover { color: var(--danger-color); }
+
+        .preset-chips {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+
+        .chip {
+            background: #fff;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2px 8px;
+            font-size: 10px;
+            color: var(--text-sub);
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+
+        .chip:hover {
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+            background: #eff6ff;
         }
 
         .router-controls {
@@ -483,24 +523,38 @@
 
     <!-- 3. 底部：路由区 -->
     <div id="router-dock">
-        <div class="section-title">Router Dock (交叉讨论)</div>
+        <div class="section-title">
+            Router Dock (交叉讨论)
+            <button id="clear-quotes" style="background:none; border:none; color:#9ca3af; cursor:pointer; font-size:10px; text-decoration:underline;">Clear All</button>
+        </div>
         
-        <!-- 引用预览区 -->
-        <div id="quote-preview">
-            <span class="close-quote">×</span>
-            <strong>Ref @<span id="quote-source">Source</span>:</strong> 
-            <span id="quote-text">Content...</span>
+        <!-- 引用列表区 -->
+        <div id="quote-list">
+            <!-- 动态插入引用块 -->
+            <div class="empty-state" style="text-align:center; color:#d1d5db; padding:10px; font-size:11px;">
+                点击上方卡片的 "引用" 按钮添加观点
+            </div>
         </div>
 
         <div class="router-controls">
-            <textarea class="main-input" id="router-input" placeholder="针对引用内容的指令... (例如: '请反驳这个观点')" style="height: 45px;"></textarea>
+            <!-- 预设指令 Chips -->
+            <div class="preset-chips">
+                <button class="chip" data-preset="red-teaming" title="找出逻辑漏洞和风险">🛑 找漏洞</button>
+                <button class="chip" data-preset="fact-check" title="核实数据和事实">🔍 查数据</button>
+                <button class="chip" data-preset="devils-advocate" title="进行逆向思考">🔄 唱反调</button>
+                <button class="chip" data-preset="execution" title="给出落地计划">🛠️ 谈落地</button>
+                <button class="chip" data-preset="trade-off" title="分析代价和副作用">⚖️ 做平衡</button>
+            </div>
+
+            <textarea class="main-input" id="router-input" placeholder="针对引用内容的指令... (点击上方胶囊可快速填入)" style="height: 60px;"></textarea>
             
             <div class="router-actions">
                 <div class="router-targets">
                     <span>Send to:</span>
-                    <label class="checkbox-label"><input type="checkbox" id="route-gpt"> GPT</label>
-                    <label class="checkbox-label"><input type="checkbox" id="route-claude" checked> Claude</label>
-                    <label class="checkbox-label"><input type="checkbox" id="route-grok"> Grok</label>
+                    <label class="checkbox-label"><input type="checkbox" id="route-gpt" value="ChatGPT"> GPT</label>
+                    <label class="checkbox-label"><input type="checkbox" id="route-claude" value="Claude"> Claude</label>
+                    <label class="checkbox-label"><input type="checkbox" id="route-grok" value="Grok"> Grok</label>
+                    <label class="checkbox-label"><input type="checkbox" id="route-gemini" value="Gemini"> Gemini</label>
                 </div>
                 <button class="btn btn-route">Fire / Route</button>
             </div>
