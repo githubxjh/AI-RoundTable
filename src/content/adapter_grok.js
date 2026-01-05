@@ -4,7 +4,7 @@ class GrokAdapter extends AdapterBase {
         super('Grok');
         this.lastPrompt = '';
         this.previousContent = '';
-        this.debugMode = true; // Enable debug mode for verification
+        this.debugMode = false; // Disable debug mode for production
     }
 
     async handleInput(text) {
