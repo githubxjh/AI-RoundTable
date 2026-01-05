@@ -4,11 +4,12 @@ class GrokAdapter extends AdapterBase {
         super('Grok');
         this.lastPrompt = '';
         this.previousContent = '';
+        this.debugMode = false; // Disable debug mode for production
     }
 
     async handleInput(text) {
-        console.log("GrokAdapter: handleInput called");
-        this.lastPrompt = text; // Save for filtering
+        if (this.debugMode) console.log("GrokAdapter: handleInput called");
+        this.lastPrompt = text; 
 
         try {
             await super.handleInput(text);
@@ -21,7 +22,7 @@ class GrokAdapter extends AdapterBase {
             const inputSelector = this.getInputSelector();
             const inputEl = document.querySelector(inputSelector);
             if (inputEl) {
-                console.log("GrokAdapter: Dispatching Enter key...");
+                if (this.debugMode) console.log("GrokAdapter: Dispatching Enter key...");
                 inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13, which: 13 }));
                 inputEl.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13, which: 13 }));
                 inputEl.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13, which: 13 }));
@@ -34,7 +35,8 @@ class GrokAdapter extends AdapterBase {
             div.ProseMirror[contenteditable="true"],
             div[contenteditable="true"].tiptap,
             div[contenteditable="true"][data-testid="grokInput"], 
-            div[contenteditable="true"][aria-label="Grok something"]
+            div[contenteditable="true"][aria-label="Grok something"],
+            textarea[placeholder*="Grok"]
         `.replace(/\s+/g, ' ').trim();
     }
 
@@ -46,30 +48,112 @@ class GrokAdapter extends AdapterBase {
             button[aria-label="Send message"],
             button[data-testid="grokInputSend"],
             button[data-testid="pill-button"],
-            div[role="button"][aria-label="Grok"]
+            div[role="button"][aria-label="Grok"],
+            button[data-testid="tweetButtonInline"],
+            div[role="button"][aria-label="Send"]
         `.replace(/\s+/g, ' ').trim();
     }
 
-    getLastMessageText() {
-        // Helper to get the very last message text in the stream (User or AI)
-        const articles = document.querySelectorAll('article[data-testid="tweet"]');
-        if (articles.length > 0) {
-            const lastArticle = articles[articles.length - 1];
-            const textEl = lastArticle.querySelector('div[data-testid="tweetText"]');
-            if (textEl) return textEl.innerText;
-        }
-        
-        // Fallback
-        const messages = document.querySelectorAll('div[data-testid="tweetText"], .grok-message-content');
-        if (messages.length > 0) {
-            return messages[messages.length - 1].innerText;
+    // New "Blind Search" to find ANY visible text at the bottom
+    getBlindSearchLastText() {
+        try {
+            // Get all visible elements with significant text
+            const allElements = document.querySelectorAll('div, p, span, article, section');
+            const candidates = [];
+            
+            for (let i = allElements.length - 1; i >= 0; i--) {
+                const el = allElements[i];
+                // Optimization: Skip if no direct text content to avoid huge dumps
+                if (!el.innerText || el.innerText.length < 5) continue;
+                
+                // Skip input elements
+                if (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') continue;
+
+                // Blacklist technical stats and UI noise
+                const text = el.innerText;
+                if (text.includes("首分块时延") || 
+                    text.includes("token 时延") || 
+                    text.includes("Time to first token") ||
+                    text.includes("Tokens per second") ||
+                    text === "更多") {
+                    continue;
+                }
+
+                // Get position
+                const rect = el.getBoundingClientRect();
+                if (rect.height === 0 || rect.width === 0) continue; // Invisible
+
+                candidates.push({
+                    el: el,
+                    text: text,
+                    bottom: rect.bottom,
+                    depth: this.getDOMDepth(el)
+                });
+                
+                // Limit candidates to avoid performance hit
+                if (candidates.length > 50) break;
+            }
+
+            // Sort by vertical position (lower is better) and depth (deeper is usually more specific text)
+            candidates.sort((a, b) => b.bottom - a.bottom);
+
+            // Find the first one that is NOT our prompt
+            for (const c of candidates) {
+                const cleanText = c.text.trim();
+                const cleanPrompt = this.lastPrompt.trim();
+                
+                // If it's the prompt, skip
+                if (cleanText === cleanPrompt || (cleanText.includes(cleanPrompt) && cleanText.length < cleanPrompt.length + 50)) {
+                    continue;
+                }
+                
+                // Found a candidate
+                if (this.debugMode) console.log("GrokDebug: Blind candidate found:", c.text.slice(0, 50));
+                return c.text;
+            }
+        } catch (e) {
+            console.error("GrokDebug: Blind search error", e);
         }
         return '';
     }
 
+    getDOMDepth(element) {
+        let depth = 0;
+        while (element.parentElement) {
+            depth++;
+            element = element.parentElement;
+        }
+        return depth;
+    }
+
+    getLastMessageText() {
+        // 1. Try Specific Selectors
+        const specificSelectors = [
+            'div[data-testid="message-bubble"]',
+            '.message-content',
+            '.message-text',
+            'div[data-testid="tweetText"]', // X.com standard
+            'article[data-testid="tweet"] div[lang]', // X.com standard
+            'div[aria-label="Grok Response"]'
+        ];
+
+        for (const sel of specificSelectors) {
+            const els = document.querySelectorAll(sel);
+            if (els.length > 0) {
+                const last = els[els.length - 1];
+                if (this.debugMode) console.log(`GrokDebug: Found selector ${sel}:`, last.innerText.slice(0, 30));
+                return last.innerText;
+            }
+        }
+
+        // 2. Fallback to Blind Search
+        if (this.debugMode) console.log("GrokDebug: No standard selectors match. Trying blind search...");
+        return this.getBlindSearchLastText();
+    }
+
     onSendPostProcessing() {
-        // Capture the state of the stream *before* (or right as) we send
         this.previousContent = this.getLastMessageText();
+        if (this.debugMode) console.log("GrokDebug: onSend - Previous Content:", this.previousContent.slice(0, 30));
         
         this.lastResponseLength = 0;
         this.isGenerating = true;
@@ -80,24 +164,23 @@ class GrokAdapter extends AdapterBase {
     checkForNewResponse() {
         const currentText = this.getLastMessageText();
         
-        if (!currentText) return;
+        if (!currentText) {
+             return;
+        }
 
         // Check generation status
         const stopBtn = document.querySelector('button[aria-label="Stop"], button[aria-label="Stop generating"]');
         const isGenerating = !!stopBtn;
 
         if (this.expectingNewMessage && !isGenerating) {
-            // 1. Check if it's the same as before we started
+            // Check if it's the same as before
             if (currentText === this.previousContent) return;
 
-            // 2. Check if it's just our own prompt (Optimistic UI or echoing)
-            // Use loose matching to handle whitespace/markdown differences
+            // Check if it's our prompt
             if (currentText.trim().includes(this.lastPrompt.trim()) && currentText.length < this.lastPrompt.length + 50) {
-                // Likely just the user prompt
                 return;
             }
 
-            // It's different from previous, and not our prompt. Must be the new answer!
             this.expectingNewMessage = false;
         }
 
