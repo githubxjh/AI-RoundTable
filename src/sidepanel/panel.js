@@ -163,15 +163,6 @@ function closeFullView() {
     fullViewModal.style.display = 'none';
 }
 
-function replyToQuestion(modelName) {
-    const reply = prompt(`回复 ${modelName} 的追问:`);
-    if (reply) {
-        // Mock reply
-        chrome.runtime.sendMessage({ type: 'REPLY_QUESTION', model: modelName, text: reply });
-        alert(`已单独发送给 ${modelName}: "${reply}"`);
-    }
-}
-
 // Listen for status updates from Background
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'STATUS_UPDATE') {

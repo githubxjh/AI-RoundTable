@@ -14,7 +14,8 @@ const MODEL_URLS = {
     'ChatGPT': 'chatgpt.com',
     'Claude': 'claude.ai',
     'Grok': 'grok.com', 
-    'Gemini': 'gemini.google.com'
+    'Gemini': 'gemini.google.com',
+    'DeepSeek': 'chat.deepseek.com'
 };
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -41,8 +42,8 @@ async function handleMessage(message) {
             return await broadcastMessage(message.text, message.targets);
         case 'ROUTE':
             return await routeMessage(message);
-        case 'REPLY_QUESTION':
-            return await sendToModel(message.model, message.text);
+        case 'ACTIVATE_TAB':
+            return await activateTab(message.model);
         case 'STATUS_UPDATE':
             // Forward to all parts of the extension (e.g., SidePanel)
             // Note: runtime.sendMessage sends to popup/options/sidepanel pages, not content scripts
@@ -133,6 +134,45 @@ async function sendMessageToTab(tabId, payload) {
         return await chrome.tabs.sendMessage(tabId, payload);
     } catch (e) {
         console.warn(`Failed to send to tab ${tabId}:`, e);
+        return { error: e.message };
+    }
+}
+
+// Activate tab and window
+async function activateTab(modelName) {
+    // Refresh list first to be safe
+    await discoverTabs();
+    
+    const tabId = activeTabs[modelName];
+    
+    if (!tabId) {
+        // If tab not found, try to create one based on the model name
+        const url = MODEL_URLS[modelName];
+        if (url) {
+            try {
+                // Prepend https:// if missing
+                const fullUrl = url.startsWith('http') ? url : `https://${url}`;
+                const newTab = await chrome.tabs.create({ url: fullUrl });
+                return { status: 'created', tabId: newTab.id };
+            } catch (e) {
+                console.warn(`Failed to create tab for ${modelName}:`, e);
+                return { status: 'error', message: `Failed to create tab: ${e.message}` };
+            }
+        }
+        return { status: 'error', message: `Model ${modelName} not found and no URL configured` };
+    }
+
+    try {
+        // Activate Tab
+        await chrome.tabs.update(tabId, { active: true });
+        
+        // Activate Window (if needed)
+        const tab = await chrome.tabs.get(tabId);
+        await chrome.windows.update(tab.windowId, { focused: true });
+        
+        return { status: 'activated' };
+    } catch (e) {
+        console.warn(`Failed to activate tab ${tabId}:`, e);
         return { error: e.message };
     }
 }

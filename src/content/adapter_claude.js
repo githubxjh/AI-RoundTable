@@ -5,16 +5,10 @@ class ClaudeAdapter extends AdapterBase {
     }
 
     getInputSelector() {
-        // Updated selector for Claude
-        // Try to match the contenteditable div in the main input area
         return 'div[contenteditable="true"].ProseMirror'; 
     }
 
     getSendBtnSelector() {
-        // Updated selector for Claude
-        // Look for button that contains "Send" or SVG icon
-        // Often it has a specific aria-label
-        // Also try to find the button near the input
         return 'button[aria-label*="Send"], button[aria-label*="send"], div[contenteditable="true"] ~ div button';
     }
 
@@ -25,10 +19,6 @@ class ClaudeAdapter extends AdapterBase {
     }
 
     checkForNewResponse() {
-        // Claude's DOM is complex and changes.
-        // We look for the last message bubble.
-        
-        // Try multiple selectors for robustness
         const messageSelector = '.font-claude-message, [data-test-id="chat-message-content"], div[data-is-streaming="true"]';
         const messages = document.querySelectorAll(messageSelector);
         
@@ -36,28 +26,50 @@ class ClaudeAdapter extends AdapterBase {
         
         const lastMessage = messages[messages.length - 1];
         
-        // Extract text but exclude thought process
-        let currentText = "";
-        
-        // Clone the node to manipulate it without affecting the DOM
+        // Clone and clean
         const clone = lastMessage.cloneNode(true);
         
-        // Remove thought blocks if any (usually .font-claude-thought or similar)
-        // Adjust selector based on inspection
-        const thoughts = clone.querySelectorAll('.font-claude-thought, [data-test-id="thought-process"]');
-        thoughts.forEach(el => el.remove());
-        
-        currentText = clone.innerText;
+        // 1. Standard "font-claude-thought" removal (already here)
+        const standardThoughts = clone.querySelectorAll('.font-claude-thought, [data-test-id="thought-process"], .thinking-process, [aria-label="Thinking Process"]');
+        standardThoughts.forEach(el => el.remove());
 
-        // Refined generating detection
-        // 1. Length changed?
+        // 2. NEW: Structure-based removal for unlabelled thoughts
+        // Based on logs, the thought block is inside a flex container with a "button" toggle
+        // Structure: <div class="... flex flex-col ..."><button class="group/row ...">...思考如何...</button>...</div>
+        // It often contains text "思考如何" or English "Thinking" inside a button or span
+        
+        const potentialThoughts = clone.querySelectorAll('div > button.group\\/row');
+        potentialThoughts.forEach(btn => {
+            // Find the parent container of this button (which is the thought block wrapper)
+            // The logs show the wrapper is the direct parent of the button
+            const wrapper = btn.parentElement;
+            if (wrapper && wrapper.tagName === 'DIV') {
+                // Double check it's likely a thought block
+                // Check if button text indicates thinking
+                if (btn.innerText.includes('思考') || btn.innerText.includes('Thinking') || btn.innerText.includes('Thought')) {
+                    wrapper.remove();
+                } else {
+                    // Even if text doesn't match, the structure (button group/row inside message) is highly specific to the thought toggle
+                    // Let's remove it to be safe, as standard messages don't have this toggle button at the top
+                    wrapper.remove();
+                }
+            }
+        });
+
+        let currentText = clone.innerText;
+
+        // Force remove "Thinking Process" text block if it leaked through
+        if (currentText.includes('Thinking Process:')) {
+            const parts = currentText.split('Thinking Process:');
+            // Keep the part AFTER the thinking process if possible, but it's hard to know where it ends.
+            // Usually the thinking process is at the start. 
+            // If we split, we might lose context. 
+            // Better rely on DOM removal above.
+        }
+
+        // Generating detection logic...
         const lengthChanged = currentText.length > this.lastResponseLength;
-        
-        // 2. Stop button visible? (Heuristic)
-        // Claude usually puts stop button in the input area
         const stopBtn = document.querySelector('button[aria-label="Stop response"]');
-        
-        // 3. Or just trust our own state if length is growing
         const isGenerating = !!stopBtn || lengthChanged;
 
         if (isGenerating) {
@@ -65,9 +77,6 @@ class ClaudeAdapter extends AdapterBase {
             this.isGenerating = true;
             this.sendUpdate('generating', currentText);
         } else {
-             // If length hasn't changed
-             // Check if the "Send" button is visible/enabled?
-             // If Send button is visible, we are likely done.
              const sendBtn = document.querySelector(this.getSendBtnSelector());
              const isSendVisible = sendBtn && !sendBtn.disabled;
              
@@ -75,8 +84,6 @@ class ClaudeAdapter extends AdapterBase {
                  this.isGenerating = false;
                  this.sendUpdate('idle', currentText);
              } else if (this.isGenerating) {
-                 // Still generating but no new text this tick?
-                 // Just update status
                  this.sendUpdate('generating', currentText);
              }
         }
