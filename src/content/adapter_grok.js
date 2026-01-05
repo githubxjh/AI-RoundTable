@@ -4,7 +4,7 @@ class GrokAdapter extends AdapterBase {
         super('Grok');
         this.lastPrompt = '';
         this.previousContent = '';
-        this.debugMode = true; // Enable debug mode to inspect Grok DOM
+        this.debugMode = true; // Enable debug mode for verification
     }
 
     async handleInput(text) {
@@ -36,7 +36,8 @@ class GrokAdapter extends AdapterBase {
             div[contenteditable="true"].tiptap,
             div[contenteditable="true"][data-testid="grokInput"], 
             div[contenteditable="true"][aria-label="Grok something"],
-            textarea[placeholder*="Grok"]
+            textarea[placeholder*="Grok"],
+            textarea[aria-label="向 Grok 提任何问题"]
         `.replace(/\s+/g, ' ').trim();
     }
 
@@ -58,10 +59,18 @@ class GrokAdapter extends AdapterBase {
     getBlindSearchLastText() {
         try {
             // Get all visible elements with significant text
+            // Note: Querying ALL elements can be slow. 
+            // Optimizing: Target text-containing elements specifically
             const allElements = document.querySelectorAll('div, p, span, article, section');
             const candidates = [];
             
-            for (let i = allElements.length - 1; i >= 0; i--) {
+            // Iterate BACKWARDS from the end of the document
+            // The response is usually at the bottom
+            // Limit to checking the last 200 elements to improve performance and relevance
+            const limit = 200; 
+            const start = Math.max(0, allElements.length - limit);
+            
+            for (let i = allElements.length - 1; i >= start; i--) {
                 const el = allElements[i];
                 // Optimization: Skip if no direct text content to avoid huge dumps
                 if (!el.innerText || el.innerText.length < 5) continue;
@@ -104,8 +113,30 @@ class GrokAdapter extends AdapterBase {
                 
                 // If it's the prompt, skip
                 // 1. Exact or contains match (standard)
-                if (cleanText === cleanPrompt || (cleanText.includes(cleanPrompt) && cleanText.length < cleanPrompt.length + 50)) {
+                // Use a tighter threshold for short prompts to avoid false positives on short answers
+                // But for "contains", we need to be careful.
+                const isShortPrompt = cleanPrompt.length < 10;
+                
+                if (cleanText === cleanPrompt) {
                     continue;
+                }
+                
+                // If text contains prompt, it might be the user's bubble OR the AI quoting the user.
+                // If it's the user's bubble, the length should be close to the prompt length.
+                if (cleanText.includes(cleanPrompt)) {
+                     // If the text is barely longer than the prompt (e.g. just prompt + metadata), it's likely the user bubble
+                     if (cleanText.length < cleanPrompt.length + 50) {
+                         continue;
+                     }
+                     // If the text is MUCH longer, it might be the AI quoting the prompt + answering.
+                     // In blind search, we usually find the smallest container. 
+                     // If we found a huge container containing the prompt, it might be a wrapper.
+                     // But we want the *response* text.
+                     
+                     // Experimental: If we found a block containing the prompt, try to strip the prompt out?
+                     // Or just skip it and hope we find a cleaner block (the answer itself) later/deeper.
+                     // Let's skip it for now, assuming the answer exists as a separate sibling or child without the prompt.
+                     continue; 
                 }
                 
                 // 2. NEW: "How can Grok help" placeholder filter
@@ -141,8 +172,28 @@ class GrokAdapter extends AdapterBase {
     }
 
     getLastMessageText() {
-        // 1. Try Specific Selectors
+        // 1. Precise Selector based on ID (New Grok 2025 Layout)
+        // IDs are like "response-58d00482-..."
+        const responseContainers = document.querySelectorAll('div[id^="response-"]');
+        if (responseContainers.length > 0) {
+            const lastContainer = responseContainers[responseContainers.length - 1];
+            
+            // Try to find the specific bubble content to avoid metadata
+            const bubble = lastContainer.querySelector('.message-bubble');
+            if (bubble) {
+                // Remove "Thinking" or "Search Analysis" if they are separate blocks inside the bubble
+                // (Assuming they might be distiguishable, but for now innerText is safer than nothing)
+                if (this.debugMode) console.log("GrokDebug: Found response container + bubble:", bubble.innerText.slice(0, 30));
+                return bubble.innerText;
+            }
+            
+            if (this.debugMode) console.log("GrokDebug: Found response container but no bubble:", lastContainer.innerText.slice(0, 30));
+            return lastContainer.innerText;
+        }
+
+        // 2. Try Specific Selectors (Legacy or fallback)
         const specificSelectors = [
+            'div.message-bubble', // General bubble class
             'div[data-testid="message-bubble"]',
             '.message-content',
             '.message-text',
@@ -155,12 +206,14 @@ class GrokAdapter extends AdapterBase {
             const els = document.querySelectorAll(sel);
             if (els.length > 0) {
                 const last = els[els.length - 1];
+                // Ensure it's not the user's prompt (simple heuristic: check if it has 'items-end' parent or similar if possible)
+                // For now, relying on the fact that responses usually come last.
                 if (this.debugMode) console.log(`GrokDebug: Found selector ${sel}:`, last.innerText.slice(0, 30));
                 return last.innerText;
             }
         }
 
-        // 2. Fallback to Blind Search
+        // 3. Fallback to Blind Search
         if (this.debugMode) console.log("GrokDebug: No standard selectors match. Trying blind search...");
         return this.getBlindSearchLastText();
     }

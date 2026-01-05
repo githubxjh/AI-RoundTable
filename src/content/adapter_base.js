@@ -51,6 +51,9 @@ class AdapterBase {
                 this.onSendPostProcessing();
             } else {
                 console.warn("Send button not found:", sendBtnSelector);
+                // Fallback: If send button is missing but we entered text, maybe try pressing Enter?
+                // This is risky if Enter makes new line, but for chat apps it usually sends.
+                // Let's rely on subclasses to implement specific Enter key logic if needed (like Gemini/Grok already do)
             }
         }, 800);
     }
@@ -77,39 +80,55 @@ class AdapterBase {
             element.focus();
             
             // Clear existing content safely
-            // Note: innerHTML = '' might break some editors (Draft.js), but usually safe for input simulation
-            // Better to select all and delete? For now, keep simple.
             element.innerHTML = '';
             
             // Dispatch input event for clearing
             element.dispatchEvent(new Event('input', { bubbles: true }));
-
+            
             // Insert text using execCommand - this is crucial for Gemini/Angular/Draft.js
-            if (document.queryCommandSupported('insertText')) {
-                // execCommand requires the element to be focused and the selection to be inside it
-                // Let's ensure selection is collapsed in the element
-                const selection = window.getSelection();
-                const range = document.createRange();
-                range.selectNodeContents(element);
-                range.collapse(true); // Collapse to start
-                selection.removeAllRanges();
-                selection.addRange(range);
-                
-                const success = document.execCommand('insertText', false, text);
-                console.log(`[AdapterBase] execCommand('insertText') success: ${success}`);
-                
-                if (!success) {
-                    // Fallback if execCommand fails (e.g. some contexts)
-                    element.innerText = text; // innerText triggers more observers than textContent
+            // Try/Catch for execCommand as it might throw in some contexts
+            let execCommandSuccess = false;
+            try {
+                if (document.queryCommandSupported('insertText')) {
+                    // execCommand requires the element to be focused and the selection to be inside it
+                    const selection = window.getSelection();
+                    const range = document.createRange();
+                    
+                    if (element.childNodes.length > 0) {
+                        range.selectNodeContents(element);
+                    } else {
+                        // Empty element, just set cursor inside
+                        range.setStart(element, 0);
+                        range.setEnd(element, 0);
+                    }
+                    
+                    range.collapse(true);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    
+                    execCommandSuccess = document.execCommand('insertText', false, text);
+                    console.log(`[AdapterBase] execCommand('insertText') success: ${execCommandSuccess}`);
                 }
-            } else {
+            } catch (e) {
+                console.warn("[AdapterBase] execCommand failed:", e);
+            }
+            
+            if (!execCommandSuccess) {
+                // Fallback 1: TextContent + Events (standard fallback)
+                console.log("[AdapterBase] Using Fallback 1: innerText");
                 element.innerText = text;
+                
+                // Fallback 2: For really stubborn editors (like Tiptap/ProseMirror sometimes), 
+                // we might need to manually create a text node and insert it.
+                if (element.innerText !== text) {
+                     console.log("[AdapterBase] Using Fallback 2: TextNode injection");
+                     element.appendChild(document.createTextNode(text));
+                }
             }
             
             // Dispatch standard events
             element.dispatchEvent(new Event('input', { bubbles: true }));
             element.dispatchEvent(new Event('change', { bubbles: true }));
-            // Some frameworks listen to composition events
             element.dispatchEvent(new Event('compositionend', { bubbles: true }));
         } else {
             // React 16+ Input Value Setter Hack for Textarea
