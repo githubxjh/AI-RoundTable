@@ -4,7 +4,7 @@ class GrokAdapter extends AdapterBase {
         super('Grok');
         this.lastPrompt = '';
         this.previousContent = '';
-        this.debugMode = false; // Disable debug mode for production
+        this.debugMode = true; // Enable debug mode to inspect Grok DOM
     }
 
     async handleInput(text) {
@@ -103,8 +103,22 @@ class GrokAdapter extends AdapterBase {
                 const cleanPrompt = this.lastPrompt.trim();
                 
                 // If it's the prompt, skip
+                // 1. Exact or contains match (standard)
                 if (cleanText === cleanPrompt || (cleanText.includes(cleanPrompt) && cleanText.length < cleanPrompt.length + 50)) {
                     continue;
+                }
+                
+                // 2. NEW: "How can Grok help" placeholder filter
+                // Grok sometimes has a visible placeholder that blind search picks up
+                if (cleanText.includes('How can Grok help') || cleanText.includes('Grok 能帮上什么忙') || cleanText.includes('Grok helps you')) {
+                     continue;
+                }
+
+                // 3. NEW: "Expert Mode" / "专家模式" UI text filter
+                if (cleanText === 'Expert' || cleanText === '专家模式' || cleanText === 'Simple' || cleanText === '普通模式' || 
+                    cleanText === '自动模式' || cleanText === '快速模式' || cleanText === 'Heavy 模式' || cleanText === 'SuperGrok' || 
+                    cleanText === '自定义指令' || cleanText.includes('Grok 4.1 Thinking')) {
+                     continue;
                 }
                 
                 // Found a candidate
