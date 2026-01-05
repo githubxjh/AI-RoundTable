@@ -72,29 +72,45 @@ class AdapterBase {
         element.focus();
 
         if (element.contentEditable === 'true' || element.getAttribute('contenteditable') === 'true') {
-            // Handle contenteditable (like Claude)
-            // Fix: Clear using innerHTML but insert text node to preserve formatting structure if needed
-            // But for simple text input, this is often sufficient.
-            // IMPORTANT: Some editors need focus event sequence
+            // Handle contenteditable (like Claude, Gemini, Grok)
+            // Ensure focus
+            element.focus();
             
+            // Clear existing content safely
+            // Note: innerHTML = '' might break some editors (Draft.js), but usually safe for input simulation
+            // Better to select all and delete? For now, keep simple.
             element.innerHTML = '';
             
             // Dispatch input event for clearing
             element.dispatchEvent(new Event('input', { bubbles: true }));
 
-            // Insert text
-            // Note: document.execCommand('insertText') is deprecated but still widely supported and mimics user typing better
-            // than setting textContent for some editors.
-            // Let's try execCommand first as it's more "native" for contentEditable
-            
+            // Insert text using execCommand - this is crucial for Gemini/Angular/Draft.js
             if (document.queryCommandSupported('insertText')) {
-                document.execCommand('insertText', false, text);
+                // execCommand requires the element to be focused and the selection to be inside it
+                // Let's ensure selection is collapsed in the element
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(element);
+                range.collapse(true); // Collapse to start
+                selection.removeAllRanges();
+                selection.addRange(range);
+                
+                const success = document.execCommand('insertText', false, text);
+                console.log(`[AdapterBase] execCommand('insertText') success: ${success}`);
+                
+                if (!success) {
+                    // Fallback if execCommand fails (e.g. some contexts)
+                    element.innerText = text; // innerText triggers more observers than textContent
+                }
             } else {
-                element.textContent = text;
+                element.innerText = text;
             }
             
-            const inputEvent = new Event('input', { bubbles: true });
-            element.dispatchEvent(inputEvent);
+            // Dispatch standard events
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+            // Some frameworks listen to composition events
+            element.dispatchEvent(new Event('compositionend', { bubbles: true }));
         } else {
             // React 16+ Input Value Setter Hack for Textarea
             // This bypasses the React wrapper to set the native value
@@ -160,6 +176,12 @@ class AdapterBase {
                 // reject(new Error(`Timeout waiting for ${selector}`));
                 // Don't reject, just return null to avoid crashing everything, let caller handle
                 console.warn(`Timeout waiting for ${selector}`);
+                
+                // Debug: Log all textareas and contenteditables
+                console.log("Debug: Available inputs:");
+                document.querySelectorAll('textarea').forEach(el => console.log('textarea:', el, el.className, el.id));
+                document.querySelectorAll('[contenteditable="true"]').forEach(el => console.log('contenteditable:', el, el.className, el.id));
+                
                 resolve(null);
             }, timeout);
         });

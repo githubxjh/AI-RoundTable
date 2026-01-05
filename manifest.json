@@ -35,12 +35,12 @@
     },
     {
       "matches": ["https://gemini.google.com/*"],
-      "js": ["src/content/adapter_base.js"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_gemini.js"],
       "run_at": "document_end"
     },
     {
       "matches": ["https://grok.com/*", "https://x.com/*"],
-      "js": ["src/content/adapter_base.js"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_grok.js"],
       "run_at": "document_end"
     }
   ]

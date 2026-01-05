@@ -38,7 +38,7 @@ async function handleMessage(message) {
 
     switch (message.type) {
         case 'BROADCAST':
-            return await broadcastMessage(message.text);
+            return await broadcastMessage(message.text, message.targets);
         case 'ROUTE':
             return await routeMessage(message);
         case 'REPLY_QUESTION':
@@ -67,19 +67,22 @@ async function discoverTabs() {
         
         if (tab.url.includes(MODEL_URLS['ChatGPT'])) activeTabs['ChatGPT'] = tab.id;
         else if (tab.url.includes(MODEL_URLS['Claude'])) activeTabs['Claude'] = tab.id;
-        else if (tab.url.includes(MODEL_URLS['Grok'])) activeTabs['Grok'] = tab.id;
-        else if (tab.url.includes(MODEL_URLS['Gemini'])) activeTabs['Gemini'] = tab.id;
+        else if (tab.url.includes('x.com/i/grok') || tab.url.includes('grok.com')) activeTabs['Grok'] = tab.id;
+        else if (tab.url.includes('gemini.google.com') || tab.url.includes('aistudio.google.com')) activeTabs['Gemini'] = tab.id;
     });
 
     console.log("Discovered Tabs:", activeTabs);
 }
 
 // Send to all connected models
-async function broadcastMessage(text) {
+async function broadcastMessage(text, targets) {
     const promises = [];
     
+    // Use targets if provided, otherwise send to all
+    const targetModels = targets || Object.keys(activeTabs);
+
     for (const [model, tabId] of Object.entries(activeTabs)) {
-        if (tabId) {
+        if (tabId && targetModels.includes(model)) {
             promises.push(sendMessageToTab(tabId, { type: 'INPUT_PROMPT', text: text, model: model }));
         }
     }

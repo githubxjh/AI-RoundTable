@@ -95,6 +95,25 @@ function clearQuote() {
 function simulateBroadcast() {
     const btn = document.querySelector('#top-deck .btn');
     const originalText = btn.innerText;
+    
+    // 1. Get checked targets
+    const targets = [];
+    document.querySelectorAll('.target-selector input[type="checkbox"]').forEach(checkbox => {
+        if (checkbox.checked) {
+            const labelText = checkbox.parentElement.innerText.trim();
+            // Exact match since we simplified the labels
+            if (labelText === 'ChatGPT') targets.push('ChatGPT');
+            else if (labelText === 'Claude') targets.push('Claude');
+            else if (labelText === 'Grok') targets.push('Grok');
+            else if (labelText === 'Gemini') targets.push('Gemini');
+        }
+    });
+
+    if (targets.length === 0) {
+        alert('请至少选择一个 AI 模型！');
+        return;
+    }
+
     btn.innerText = 'Sending...';
     btn.style.backgroundColor = '#6b7280';
     
@@ -104,11 +123,15 @@ function simulateBroadcast() {
         btn.style.backgroundColor = '';
         
         // Mock sending message
-        chrome.runtime.sendMessage({ type: 'BROADCAST', text: document.querySelector('.main-input').value }, (response) => {
+        chrome.runtime.sendMessage({ 
+            type: 'BROADCAST', 
+            text: document.querySelector('.main-input').value,
+            targets: targets 
+        }, (response) => {
              console.log('Broadcast response:', response);
         });
         
-        alert('已将带有【角色设定】的指令广播给选中的 AI！');
+        // alert('已将带有【角色设定】的指令广播给选中的 AI！');
     }, 500);
 }
 
