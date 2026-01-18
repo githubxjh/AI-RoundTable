@@ -2,6 +2,8 @@
 class ClaudeAdapter extends AdapterBase {
     constructor() {
         super('Claude');
+        // Initial sync to catch existing message if any
+        setTimeout(() => this.checkForNewResponse(), 1000);
     }
 
     getInputSelector() {
@@ -19,7 +21,9 @@ class ClaudeAdapter extends AdapterBase {
     }
 
     checkForNewResponse() {
-        const messageSelector = '.font-claude-message, [data-test-id="chat-message-content"], div[data-is-streaming="true"]';
+        // Updated selector based on user HTML (2025 version)
+        // .standard-markdown appears to be the reliable container for AI messages
+        const messageSelector = '.font-claude-message, [data-test-id="chat-message-content"], div[data-is-streaming="true"], .standard-markdown';
         const messages = document.querySelectorAll(messageSelector);
         
         if (messages.length === 0) return;
@@ -77,14 +81,11 @@ class ClaudeAdapter extends AdapterBase {
             this.isGenerating = true;
             this.sendUpdate('generating', currentText);
         } else {
-             const sendBtn = document.querySelector(this.getSendBtnSelector());
-             const isSendVisible = sendBtn && !sendBtn.disabled;
-             
-             if (this.isGenerating && isSendVisible) {
+             // Logic update: Ensure we send 'idle' update if content is new (Initial Sync support)
+             if (this.isGenerating || currentText !== this.lastSentContent) {
                  this.isGenerating = false;
+                 this.lastSentContent = currentText;
                  this.sendUpdate('idle', currentText);
-             } else if (this.isGenerating) {
-                 this.sendUpdate('generating', currentText);
              }
         }
     }

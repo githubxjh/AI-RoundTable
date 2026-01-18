@@ -15,6 +15,7 @@ const PRESETS = {
     'red-teaming': "请作为严厉的批评者，找出上述方案中最大的逻辑漏洞、风险点和过于乐观的假设。",
     'fact-check': "请核实上述内容中的数据引用和事实前提。是否存在过时信息或误导性描述？",
     'devils-advocate': "如果上述观点完全错误，反面情况会是什么？请给出完全相反的推演逻辑。",
+    'sequential-thinking': "请使用 Sequential Thinking（顺序思考）来回答：\n\n1) 拆解问题：先列出你需要回答的关键子问题。\n2) 逐步推演：按步骤推导，每一步明确假设/依据。\n3) 汇总输出：给出结论 + 风险点 + 仍不确定的信息 + 下一步要验证什么。\n\n要求：结构化输出，避免空泛结论。",
     'execution': "不要讲大道理。基于上述思路，请给出具体的、可执行的 Step-by-Step 落地计划（包含时间节点）。",
     'trade-off': "上述方案的收益很明确，但代价是什么？请分析其机会成本和潜在的副作用。",
     'defend-revise': "这是来自其他董事会成员的【红队审查/反对意见】。请逐一回应这些质疑：\n\n1. 接受修正：对于合理的风险提示，请明确承认并修改你的原方案。\n2. 事实反驳：如果存在误解或数据偏差，请提供有力证据进行反驳。\n\n目标：基于这些反馈，输出一个修补了漏洞、更加稳健的【2.0版方案】。"
@@ -81,6 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
             else if (card.id === 'card-claude') model = 'Claude';
             else if (card.id === 'card-grok') model = 'Grok';
             else if (card.id === 'card-gemini') model = 'Gemini';
+            else if (card.id === 'card-doubao') model = 'Doubao';
             
             if (model) {
                  chrome.runtime.sendMessage({ type: 'ACTIVATE_TAB', model: model });
@@ -191,6 +193,7 @@ function simulateBroadcast() {
             else if (labelText === 'Claude') targets.push('Claude');
             else if (labelText === 'Grok') targets.push('Grok');
             else if (labelText === 'Gemini') targets.push('Gemini');
+            else if (labelText === '豆包' || labelText === 'Doubao') targets.push('Doubao');
         }
     });
 
@@ -275,7 +278,8 @@ const MODEL_CARD_MAP = {
     'ChatGPT': 'card-gpt',
     'Claude': 'card-claude',
     'Grok': 'card-grok',
-    'Gemini': 'card-gemini'
+    'Gemini': 'card-gemini',
+    'Doubao': 'card-doubao'
 };
 
 function updateCard(model, status, summary) {

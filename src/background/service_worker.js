@@ -6,7 +6,8 @@ let activeTabs = {
     'ChatGPT': null,
     'Claude': null,
     'Grok': null,
-    'Gemini': null
+    'Gemini': null,
+    'Doubao': null
 };
 
 // Configuration for matching URLs
@@ -15,6 +16,7 @@ const MODEL_URLS = {
     'Claude': 'claude.ai',
     'Grok': 'grok.com', 
     'Gemini': 'gemini.google.com',
+    'Doubao': 'www.doubao.com/chat/',
     'DeepSeek': 'chat.deepseek.com'
 };
 
@@ -61,7 +63,7 @@ async function discoverTabs() {
     const tabs = await chrome.tabs.query({});
     
     // Reset
-    activeTabs = { 'ChatGPT': null, 'Claude': null, 'Grok': null, 'Gemini': null };
+    activeTabs = { 'ChatGPT': null, 'Claude': null, 'Grok': null, 'Gemini': null, 'Doubao': null };
 
     tabs.forEach(tab => {
         if (!tab.url) return;
@@ -70,6 +72,7 @@ async function discoverTabs() {
         else if (tab.url.includes(MODEL_URLS['Claude'])) activeTabs['Claude'] = tab.id;
         else if (tab.url.includes('x.com/i/grok') || tab.url.includes('grok.com')) activeTabs['Grok'] = tab.id;
         else if (tab.url.includes('gemini.google.com') || tab.url.includes('aistudio.google.com')) activeTabs['Gemini'] = tab.id;
+        else if (tab.url.includes('doubao.com/chat') || tab.url.includes('flow-chat.gf.bytedance.net/chat')) activeTabs['Doubao'] = tab.id;
     });
 
     console.log("Discovered Tabs:", activeTabs);

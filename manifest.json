@@ -14,7 +14,9 @@
     "https://claude.ai/*",
     "https://gemini.google.com/*",
     "https://grok.com/*",
-    "https://x.com/*"
+    "https://x.com/*",
+    "https://www.doubao.com/*",
+    "https://flow-chat.gf.bytedance.net/*"
   ],
   "background": {
     "service_worker": "src/background/service_worker.js"
@@ -36,6 +38,11 @@
     {
       "matches": ["https://gemini.google.com/*"],
       "js": ["src/content/adapter_base.js", "src/content/adapter_gemini.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["https://www.doubao.com/*", "https://flow-chat.gf.bytedance.net/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_doubao.js"],
       "run_at": "document_end"
     },
     {

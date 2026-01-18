@@ -399,7 +399,8 @@
             <label class="checkbox-label"><input type="checkbox" checked> ChatGPT</label>
             <label class="checkbox-label"><input type="checkbox" checked> Claude</label>
             <label class="checkbox-label"><input type="checkbox" checked> Grok</label>
-            <label class="checkbox-label"><input type="checkbox"> Gemini</label>
+            <label class="checkbox-label"><input type="checkbox" checked> Gemini</label>
+            <label class="checkbox-label"><input type="checkbox" checked> 豆包</label>
         </div>
         <button class="btn">Broadcast (全部发送)</button>
     </div>
@@ -519,6 +520,28 @@
             </div>
         </div>
 
+        <div class="ai-card" id="card-doubao">
+            <div class="card-header">
+                <div class="header-left">
+                    <div class="model-name">
+                        <div class="status-dot"></div>
+                        豆包
+                    </div>
+                    <select class="role-select">
+                        <option selected>通用助手 (General)</option>
+                    </select>
+                </div>
+                <span class="tag">Idle</span>
+            </div>
+            <div class="card-body" style="color:#9ca3af; font-style:italic;">
+                等待指令...
+            </div>
+            <div class="card-actions">
+                <button class="btn-quote" data-source="Doubao" disabled>无内容</button>
+                <button class="btn-expand" data-model="Doubao" disabled>⤢</button>
+            </div>
+        </div>
+
     </div>
 
     <!-- 3. 底部：路由区 -->
@@ -542,6 +565,7 @@
                 <button class="chip" data-preset="red-teaming" title="找出逻辑漏洞和风险">🛑 找漏洞</button>
                 <button class="chip" data-preset="fact-check" title="核实数据和事实">🔍 查数据</button>
                 <button class="chip" data-preset="devils-advocate" title="进行逆向思考">🔄 唱反调</button>
+                <button class="chip" data-preset="sequential-thinking" title="按步骤拆解与推演">🧠 顺序思考</button>
                 <button class="chip" data-preset="execution" title="给出落地计划">🛠️ 谈落地</button>
                 <button class="chip" data-preset="trade-off" title="分析代价和副作用">⚖️ 做平衡</button>
                 <button class="chip" data-preset="defend-revise" title="回应质疑并优化方案">🛡️ 答辩修正</button>
@@ -556,6 +580,7 @@
                     <label class="checkbox-label"><input type="checkbox" id="route-claude" value="Claude"> Claude</label>
                     <label class="checkbox-label"><input type="checkbox" id="route-grok" value="Grok"> Grok</label>
                     <label class="checkbox-label"><input type="checkbox" id="route-gemini" value="Gemini"> Gemini</label>
+                    <label class="checkbox-label"><input type="checkbox" id="route-doubao" value="Doubao"> 豆包</label>
                 </div>
                 <button class="btn btn-route">Fire / Route</button>
             </div>
