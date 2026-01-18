@@ -98,13 +98,14 @@ async function broadcastMessage(text, targets) {
 // Send to specific targets (routing)
 async function routeMessage(message) {
     // Logic: Combine quote + instruction
-    const prompt = `
-[引用观点 / Reference]
-${message.quote}
-
-[指令 / Instruction]
-${message.instruction}
-    `.trim();
+    const promptParts = [];
+    if (message.instruction && String(message.instruction).trim()) {
+        promptParts.push(`[指令 / Instruction]\n${message.instruction}`.trim());
+    }
+    if (message.quote && String(message.quote).trim()) {
+        promptParts.push(`[引用观点 / Reference]\n${message.quote}`.trim());
+    }
+    const prompt = promptParts.join('\n\n').trim();
 
     // Use explicit targets from message if available
     const targetModels = message.targets || [];
