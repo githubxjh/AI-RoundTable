@@ -140,9 +140,18 @@ async function initializeSettings() {
         state.settings = { ...DEFAULT_SETTINGS };
     }
 
-    // Backward compatibility: migrate old English default template to new Chinese default.
     const currentTemplate = String(state.settings.reviewPromptTemplate || '');
-    if (currentTemplate.includes('You are an impartial evaluator.')) {
+    // Backward compatibility + self-heal: migrate old template or reset if HTML fragment polluted this field.
+    const shouldResetTemplate =
+        currentTemplate.includes('You are an impartial evaluator.')
+        || currentTemplate.includes('<button id="start-review-btn"')
+        || currentTemplate.includes('<div id="review-progress">')
+        || currentTemplate.includes('<div id="result-board">')
+        || currentTemplate.includes('?/button>')
+        || currentTemplate.includes('?/div>')
+        || currentTemplate.includes('?/span>');
+
+    if (shouldResetTemplate) {
         state.settings.reviewPromptTemplate = DEFAULT_SETTINGS.reviewPromptTemplate;
         saveRtSettings({ reviewPromptTemplate: DEFAULT_SETTINGS.reviewPromptTemplate }).catch(console.error);
     }
@@ -243,23 +252,80 @@ async function onBroadcast() {
     }
 }
 
-async function onAddCandidate(model) {
-    if (!state.activeRoundId) {
-        alert('请先通过 Broadcast 创建回合');
-        return;
+function getManualRoundQuestion() {
+    return String(refs.globalInput?.value || '').trim() || '手动回合';
+}
+
+function getManualRoundTargetModels() {
+    const selected = getCheckedValues('.target-selector input[type="checkbox"]');
+    return selected.length > 0 ? selected : Object.keys(MODEL_CARD_MAP);
+}
+
+async function resolveRoundForCandidate() {
+    if (!state.activeRoundId || !state.activeRound) {
+        return { roundId: null, createRoundIfMissing: true };
     }
 
+    const status = String(state.activeRound.status || '').trim().toLowerCase();
+    if (status === 'collecting') {
+        return { roundId: state.activeRoundId, createRoundIfMissing: false };
+    }
+
+    if (['reviewing', 'completed', 'failed'].includes(status)) {
+        const createNewRound = confirm(
+            '当前回合正在评审或已结束。\n确定：新建回合并加入候选\n取消：继续加入当前回合'
+        );
+        if (createNewRound) {
+            return { roundId: null, createRoundIfMissing: true };
+        }
+        return { roundId: state.activeRoundId, createRoundIfMissing: false };
+    }
+
+    return { roundId: state.activeRoundId, createRoundIfMissing: false };
+}
+
+function getCandidateAddErrorMessage(response) {
+    const code = String(response?.code || '').trim().toLowerCase();
+
+    if (code === 'candidate_summary_missing') {
+        return '该模型暂无可抓取回答。请先到对应官网完成一轮回复，再点加入候选。';
+    }
+    if (code === 'round_not_found') {
+        return '当前回合不存在，请重试加入候选。';
+    }
+    if (code === 'invalid_request') {
+        return response?.message || '加入候选请求无效';
+    }
+    return response?.message || '加入候选失败';
+}
+
+async function onAddCandidate(model) {
     try {
-        const response = await sendMessage({
+        const resolved = await resolveRoundForCandidate();
+        const payload = {
             type: 'ROUND_ADD_CANDIDATE',
-            roundId: state.activeRoundId,
             model
+        };
+
+        if (resolved.roundId) {
+            payload.roundId = resolved.roundId;
+        }
+        if (resolved.createRoundIfMissing) {
+            payload.createRoundIfMissing = true;
+            payload.questionIfCreate = getManualRoundQuestion();
+            payload.targetModelsIfCreate = getManualRoundTargetModels();
+        }
+
+        const response = await sendMessage({
+            ...payload
         });
+
         if (response?.status !== 'candidate_added') {
-            alert(response?.message || '加入候选失败');
+            alert(getCandidateAddErrorMessage(response));
             return;
         }
-        await setActiveRound(state.activeRoundId);
+
+        await setActiveRound(response.roundId || resolved.roundId || state.activeRoundId);
     } catch (error) {
         console.error(error);
         alert(`加入候选失败: ${error.message}`);
@@ -348,7 +414,7 @@ async function onRoute() {
 
 async function onStartReview() {
     if (!state.activeRoundId || !state.activeRound) {
-        alert('没有可评审的回合，请先 Broadcast 并加入候选');
+        alert('没有可评审的回合，请先加入候选（可不 Broadcast）');
         return;
     }
 
@@ -590,10 +656,10 @@ function getEvaluationStatusDetail(evaluation) {
 }
 
 function syncCandidateButtons() {
-    const disabled = !state.activeRoundId;
+    const hasRound = Boolean(state.activeRoundId);
     document.querySelectorAll('.btn-candidate').forEach((button) => {
-        button.disabled = disabled;
-        button.title = disabled ? '请先创建回合' : '';
+        button.disabled = false;
+        button.title = hasRound ? '' : '将自动创建回合';
     });
 }
 

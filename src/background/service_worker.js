@@ -336,21 +336,72 @@ async function handleRoundCreate(message) {
 }
 
 async function handleRoundAddCandidate(message) {
-    const roundId = message.roundId;
-    const model = message.model;
-    if (!roundId || !model) {
-        return { status: 'error', message: 'roundId and model are required' };
+    const model = String(message.model || '').trim();
+    const requestedRoundId = String(message.roundId || '').trim();
+    const createRoundIfMissing = Boolean(message.createRoundIfMissing);
+
+    if (!model) {
+        return { status: 'error', code: 'invalid_request', message: 'model is required' };
+    }
+    if (!MODEL_NAMES.includes(model)) {
+        return { status: 'error', code: 'invalid_request', message: `Unknown model: ${model}` };
     }
 
     const state = await ensureRtState();
-    const round = (state[RT_KEYS.rounds] || {})[roundId];
-    if (!round) {
-        return { status: 'error', message: `Round not found: ${roundId}` };
-    }
-
     const modelState = (state[RT_KEYS.modelState] || {})[model];
     if (!modelState || !String(modelState.lastSummary || '').trim()) {
-        return { status: 'error', message: `No captured answer for model ${model}` };
+        return {
+            status: 'error',
+            code: 'candidate_summary_missing',
+            message: `No captured answer for model ${model}`
+        };
+    }
+
+    let roundId = requestedRoundId;
+    let roundCreated = false;
+    let workingState = state;
+
+    if (!roundId) {
+        if (!createRoundIfMissing) {
+            return {
+                status: 'error',
+                code: 'invalid_request',
+                message: 'roundId is required unless createRoundIfMissing=true'
+            };
+        }
+
+        const question = String(message.questionIfCreate || '').trim() || '手动回合';
+        const targetModels = [...new Set(
+            (Array.isArray(message.targetModelsIfCreate) ? message.targetModelsIfCreate : [])
+                .map((item) => String(item || '').trim())
+                .filter((item) => MODEL_NAMES.includes(item))
+        )];
+
+        const createResp = await handleRoundCreate({
+            question,
+            targetModels: targetModels.length > 0 ? targetModels : MODEL_NAMES
+        });
+
+        if (!createResp || createResp.status !== 'round_created' || !createResp.roundId) {
+            return {
+                status: 'error',
+                code: 'invalid_request',
+                message: createResp?.message || 'Failed to create round'
+            };
+        }
+
+        roundId = createResp.roundId;
+        roundCreated = true;
+        workingState = await ensureRtState();
+    }
+
+    const round = (workingState[RT_KEYS.rounds] || {})[roundId];
+    if (!round) {
+        return {
+            status: 'error',
+            code: 'round_not_found',
+            message: `Round not found: ${roundId}`
+        };
     }
 
     const candidateId = createId('candidate');
@@ -364,8 +415,8 @@ async function handleRoundAddCandidate(message) {
         capturedAt: Date.now()
     };
 
-    const rounds = { ...(state[RT_KEYS.rounds] || {}) };
-    const candidates = { ...(state[RT_KEYS.candidates] || {}) };
+    const rounds = { ...(workingState[RT_KEYS.rounds] || {}) };
+    const candidates = { ...(workingState[RT_KEYS.candidates] || {}) };
     const nextRound = {
         ...round,
         candidateIds: [...new Set([...(round.candidateIds || []), candidateId])],
@@ -381,7 +432,7 @@ async function handleRoundAddCandidate(message) {
     });
 
     emitRoundEvent(roundId, 'candidate_added', { candidate, candidateCount: nextRound.candidateIds.length });
-    return { status: 'candidate_added', roundId, candidateId, candidate };
+    return { status: 'candidate_added', roundId, candidateId, candidate, roundCreated };
 }
 
 async function handleRoundStartReview(message) {

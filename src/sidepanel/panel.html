@@ -396,7 +396,7 @@
             <div class="card-body">Waiting for response...</div>
             <div class="card-actions">
                 <button class="btn btn-neutral btn-small btn-quote" data-source="ChatGPT">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="ChatGPT">加入候�?/button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="ChatGPT">加入候选</button>
             </div>
         </div>
 
@@ -408,7 +408,7 @@
             <div class="card-body">Waiting for response...</div>
             <div class="card-actions">
                 <button class="btn btn-neutral btn-small btn-quote" data-source="Claude">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="Claude">加入候�?/button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="Claude">加入候选</button>
             </div>
         </div>
 
@@ -420,7 +420,7 @@
             <div class="card-body">Waiting for response...</div>
             <div class="card-actions">
                 <button class="btn btn-neutral btn-small btn-quote" data-source="Grok">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="Grok">加入候�?/button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="Grok">加入候选</button>
             </div>
         </div>
 
@@ -432,7 +432,7 @@
             <div class="card-body">Waiting for response...</div>
             <div class="card-actions">
                 <button class="btn btn-neutral btn-small btn-quote" data-source="Gemini">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="Gemini">加入候�?/button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="Gemini">加入候选</button>
             </div>
         </div>
 
@@ -444,7 +444,7 @@
             <div class="card-body">Waiting for response...</div>
             <div class="card-actions">
                 <button class="btn btn-neutral btn-small btn-quote" data-source="Doubao">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="Doubao">加入候�?/button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="Doubao">加入候选</button>
             </div>
         </div>
     </section>
@@ -456,11 +456,11 @@
         </div>
         <div id="round-meta">
             <div class="meta-item"><span class="meta-label">ID</span><span id="round-id">-</span></div>
-            <div class="meta-item"><span class="meta-label">状�?/span><span id="round-status">none</span></div>
-            <div class="meta-item"><span class="meta-label">候�?/span><span id="round-candidate-count">0</span></div>
+            <div class="meta-item"><span class="meta-label">状态</span><span id="round-status">none</span></div>
+            <div class="meta-item"><span class="meta-label">候选</span><span id="round-candidate-count">0</span></div>
             <div class="meta-item"><span class="meta-label">创建时间</span><span id="round-created-at">-</span></div>
         </div>
-        <div class="small-muted" id="round-question">当前未创建回�?/div>
+        <div class="small-muted" id="round-question">当前未创建回合</div>
     </section>
 
     <section id="router-dock" class="panel">
@@ -469,13 +469,13 @@
             <button id="clear-quotes" class="btn btn-neutral btn-small">Clear Quotes</button>
         </div>
         <div id="quote-list">
-            <div class="empty">点击“引用”把回答加入路由�?/div>
+            <div class="empty">点击“引用”把回答加入路由区</div>
         </div>
         <div class="chip-row">
-            <button class="chip" data-preset="red-teaming">找漏�?/button>
-            <button class="chip" data-preset="fact-check">核事�?/button>
-            <button class="chip" data-preset="trade-off">看取�?/button>
-            <button class="chip" data-preset="execution">要落�?/button>
+            <button class="chip" data-preset="red-teaming">找漏洞</button>
+            <button class="chip" data-preset="fact-check">核事实</button>
+            <button class="chip" data-preset="trade-off">看取舍</button>
+            <button class="chip" data-preset="execution">要落地</button>
         </div>
         <textarea id="router-input" placeholder="针对引用内容输入补充指令"></textarea>
         <div class="checkbox-row router-targets">
@@ -503,11 +503,11 @@
             <label class="checkbox-label"><input type="checkbox" value="Doubao">Doubao</label>
         </div>
 
-        <textarea id="review-template" placeholder="评分模板（支�?{{question}} �?{{answers}}�?></textarea>
+        <textarea id="review-template" placeholder="评分模板（支持 {{question}} 和 {{answers}}）"></textarea>
         <div class="inline-actions">
-            <button id="start-review-btn" class="btn btn-primary">开始评�?/button>
+            <button id="start-review-btn" class="btn btn-primary">开始评审</button>
         </div>
-        <div id="review-progress">等待开始评�?/div>
+        <div id="review-progress">等待开始评审</div>
         <div id="judge-status-list">
             <div class="empty">No judge tasks yet</div>
         </div>
