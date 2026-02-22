@@ -1,0 +1,6 @@
+
+!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="0cf6a3a5-e29f-509e-b640-db78f38007ea")}catch(e){}}();
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,997063,e=>{e.v(JSON.parse('{"feedback.area-label":"你的反馈","feedback.report-type-label":"反馈类型","report-dialog.select-report-label":"选择报告类型","report-dialog.send-fail":"错误报告发送失败","report-dialog.sent-report":"错误报告发送成功！","report-dialog.textarea-placeholder":"请描述你遇到的问题或对 Grok 的反馈意见。","report-dialog.title":"报告问题","report-type.child-safety-label":"儿童安全问题","report-type.general-feedback-label":"一般意见反馈","report-type.issue-report-label":"问题 / 漏洞报告","report-type.response-feedback-label":"回应反馈","reportDialog.cancel":"取消","reportDialog.send":"发送"}'))}]);
+
+//# sourceMappingURL=4c3049d883dbfe4c.js.map
+//# debugId=0cf6a3a5-e29f-509e-b640-db78f38007ea

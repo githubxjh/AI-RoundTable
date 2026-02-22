@@ -6,6 +6,16 @@ class GrokAdapter extends AdapterBase {
         this.stableText = '';
         this.stableTicks = 0;
         this.lastGeneratingSummary = '';
+        this.lastBlockedReason = '';
+        this.stopSeen = false;
+        this.stopGoneSince = 0;
+        this.responseWatchStartedAt = 0;
+        this.lastStableTickAt = 0;
+        this.stabilityPollMs = 500;
+        this.requiredStableTicks = 3;
+        this.stopStabilizeMs = 1500;
+        this.minIdleChars = 80;
+        this.reviewTagWaitMaxMs = 12000;
     }
 
     async handleInput(text) {
@@ -60,13 +70,14 @@ class GrokAdapter extends AdapterBase {
 
     getAssistantSelectors() {
         return [
+            'div[id^="response-"].items-start .message-bubble',
+            'div[id^="response-"].items-start [data-testid="message-bubble"]',
+            'div[id^="response-"].items-start .response-content-markdown',
+            'div[id^="response-"].items-start .markdown',
+            'div[id^="response-"] [data-testid*="assistant"] .message-bubble',
+            'div[id^="response-"] [data-testid*="assistant"] .markdown',
             'div[id^="response-"] .message-bubble',
-            'div[id^="response-"] [data-testid="message-bubble"]',
-            'div[id^="response-"] [data-testid*="assistant"]',
-            'div[id^="response-"] .markdown',
-            '[data-testid*="assistant"] .message-bubble',
-            '[data-testid*="assistant"] .markdown',
-            '.message-bubble'
+            'div[id^="response-"] .markdown'
         ];
     }
 
@@ -117,19 +128,43 @@ class GrokAdapter extends AdapterBase {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    isVisible(node) {
+        if (!node) return false;
+        return (node.getClientRects() || []).length > 0;
+    }
+
+    isInteractiveButton(node) {
+        if (!node) return false;
+        if (node.disabled) return false;
+        if (String(node.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
+        return this.isVisible(node);
+    }
+
     isGeneratingIndicatorActive() {
-        const stopSelectors = [
+        const directSelectors = [
             'button[aria-label="Stop"]',
             'button[aria-label="Stop generating"]',
-            'button[aria-label="停止"]',
-            'button[aria-label="停止生成"]',
-            'button[data-testid*="stop"]'
+            'button[aria-label*="Stop"]',
+            'button[aria-label*="stop"]',
+            'button[aria-label*="\u505c\u6b62"]',
+            'button[aria-label*="\u4e2d\u6b62"]',
+            'button[data-testid*="stop"]',
+            '[role="button"][aria-label*="Stop"]',
+            '[role="button"][aria-label*="\u505c\u6b62"]'
         ].join(', ');
-        const button = document.querySelector(stopSelectors);
-        if (!button) return false;
-        if (button.disabled) return false;
-        if (String(button.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
-        return true;
+        const direct = document.querySelector(directSelectors);
+        if (this.isInteractiveButton(direct)) return true;
+
+        const candidates = Array.from(document.querySelectorAll('button, [role="button"]'));
+        return candidates.some((node) => {
+            if (!this.isInteractiveButton(node)) return false;
+            const label = [
+                String(node.getAttribute('aria-label') || ''),
+                String(node.getAttribute('title') || ''),
+                String(node.innerText || '')
+            ].join(' ').toLowerCase();
+            return /(stop|stopping|\u505c\u6b62|\u4e2d\u6b62)/i.test(label);
+        });
     }
 
     getBlindSearchLastText() {
@@ -142,25 +177,88 @@ class GrokAdapter extends AdapterBase {
             if (!text || text.length < 8) continue;
             if (text === this.lastPrompt.trim()) continue;
             if (text.includes('How can Grok help')) continue;
+            if (this.isTemplateEchoText(text)) continue;
             return text;
         }
         return '';
     }
 
-    getLastMessageText() {
-        for (const selector of this.getAssistantSelectors()) {
-            const nodes = Array.from(document.querySelectorAll(selector))
-                .map((node) => String(node.innerText || '').trim())
-                .filter(Boolean);
-            if (nodes.length > 0) {
-                return nodes[nodes.length - 1];
+    isAssistantContainer(node) {
+        if (!node) return false;
+
+        const container = node.closest?.('div[id^="response-"]');
+        if (container) {
+            const className = String(container.className || '');
+            if (className.includes('items-end')) return false;
+            if (className.includes('items-start')) return true;
+
+            const containerRole = String(container.getAttribute('data-role') || '').toLowerCase();
+            if (containerRole.includes('assistant') || containerRole.includes('model')) return true;
+        }
+
+        const selfRole = String(node.getAttribute?.('data-message-author-role') || '').toLowerCase();
+        if (selfRole === 'assistant') return true;
+
+        const testId = String(node.getAttribute?.('data-testid') || '').toLowerCase();
+        if (testId.includes('assistant') || testId.includes('model')) return true;
+
+        return false;
+    }
+
+    isTemplateEchoText(text) {
+        const normalized = String(text || '').trim().toLowerCase();
+        if (!normalized) return false;
+        if (normalized.includes('"reason": "short reason"') && normalized.includes('"evidence": ["point1", "point2"]')) {
+            return true;
+        }
+        if (normalized.includes('json schema') && normalized.includes('<eval_json>{...}</eval_json>')) {
+            return true;
+        }
+        if (
+            normalized.includes('\u4f60\u662f\u4e00\u540d\u5ba2\u89c2\u4e2d\u7acb\u7684\u8bc4\u5ba1\u5458')
+            && normalized.includes('\u8bf7\u8bc4\u4f30\u4ee5\u4e0b\u533f\u540d\u7b54\u6848')
+        ) {
+            return true;
+        }
+        return false;
+    }
+
+    acceptCandidateText(text, node = null) {
+        const normalized = String(text || '').trim();
+        if (!normalized) return false;
+        if (this.looksLikePromptEcho(normalized)) return false;
+        if (this.isTemplateEchoText(normalized)) return false;
+
+        if (node) {
+            const container = node.closest?.('div[id^="response-"]');
+            if (container) {
+                const className = String(container.className || '');
+                if (className.includes('items-end')) return false;
             }
         }
 
-        const responseContainers = document.querySelectorAll('div[id^="response-"]');
-        if (responseContainers.length > 0) {
-            const text = String(responseContainers[responseContainers.length - 1].innerText || '').trim();
-            if (text) return text;
+        return true;
+    }
+
+    getLastMessageText() {
+        for (const selector of this.getAssistantSelectors()) {
+            const nodes = Array.from(document.querySelectorAll(selector));
+            for (let i = nodes.length - 1; i >= 0; i -= 1) {
+                const node = nodes[i];
+                if (!this.isAssistantContainer(node)) continue;
+                const text = String(node.innerText || '').trim();
+                if (!this.acceptCandidateText(text, node)) continue;
+                return text;
+            }
+        }
+
+        const responseContainers = Array.from(document.querySelectorAll('div[id^="response-"]'));
+        for (let i = responseContainers.length - 1; i >= 0; i -= 1) {
+            const container = responseContainers[i];
+            if (!this.isAssistantContainer(container)) continue;
+            const text = String(container.innerText || '').trim();
+            if (!this.acceptCandidateText(text, container)) continue;
+            return text;
         }
 
         return this.getBlindSearchLastText();
@@ -184,10 +282,39 @@ class GrokAdapter extends AdapterBase {
         this.stableText = '';
         this.stableTicks = 0;
         this.lastGeneratingSummary = '';
+        this.lastBlockedReason = '';
+        this.stopSeen = false;
+        this.stopGoneSince = 0;
+        this.responseWatchStartedAt = Date.now();
+        this.lastStableTickAt = Date.now();
         this.sendUpdate('generating', 'Waiting for response...');
     }
 
+    emitGeneratingBlock(summary, reason, extra = {}) {
+        const nextSummary = summary || 'Generating...';
+        if (!this.isGenerating || nextSummary !== this.lastGeneratingSummary || reason !== this.lastBlockedReason) {
+            this.sendUpdate('generating', nextSummary);
+            this.lastGeneratingSummary = nextSummary;
+            this.lastBlockedReason = reason;
+            console.log('GrokAdapter idle blocked', {
+                model: this.modelName,
+                requestId: this.currentRequestId || null,
+                reason,
+                summaryChars: nextSummary.length,
+                stableTicks: this.stableTicks,
+                stopSeen: this.stopSeen,
+                ...extra
+            });
+        }
+        this.isGenerating = true;
+    }
+
+    containsEvalClosingTag(text) {
+        return /<\/EVAL_JSON>/i.test(String(text || ''));
+    }
+
     checkForNewResponse() {
+        const now = Date.now();
         const currentText = this.getLastMessageText();
         const isGenerating = this.isGeneratingIndicatorActive();
 
@@ -196,6 +323,10 @@ class GrokAdapter extends AdapterBase {
             this.expectingNewMessage = false;
             this.stableText = '';
             this.stableTicks = 0;
+            this.lastStableTickAt = now;
+            this.stopSeen = true;
+            this.stopGoneSince = 0;
+            this.lastBlockedReason = '';
             if (!this.isGenerating || summary !== this.lastGeneratingSummary) {
                 this.sendUpdate('generating', summary);
                 this.lastGeneratingSummary = summary;
@@ -207,9 +338,13 @@ class GrokAdapter extends AdapterBase {
             return;
         }
 
+        if (this.stopSeen && !this.stopGoneSince) {
+            this.stopGoneSince = now;
+        }
+
         this.lastGeneratingSummary = '';
         if (!currentText.trim()) return;
-        if (this.looksLikePromptEcho(currentText)) return;
+        if (!this.acceptCandidateText(currentText)) return;
 
         if (this.expectingNewMessage) {
             if (currentText === this.previousContent) return;
@@ -219,15 +354,59 @@ class GrokAdapter extends AdapterBase {
         if (currentText !== this.stableText) {
             this.stableText = currentText;
             this.stableTicks = 1;
+            this.lastStableTickAt = now;
+            this.emitGeneratingBlock(currentText, 'not_stable');
             return;
         }
 
+        if (now - this.lastStableTickAt < this.stabilityPollMs) return;
+        this.lastStableTickAt = now;
+
         this.stableTicks += 1;
-        if (this.stableTicks < 2) return;
+        if (this.stableTicks < this.requiredStableTicks) {
+            this.emitGeneratingBlock(currentText, 'not_stable');
+            return;
+        }
+
+        const isReviewMode = this.currentMode === 'review';
+        const elapsedSinceWatchStart = now - this.responseWatchStartedAt;
+        if (isReviewMode && !this.stopSeen && elapsedSinceWatchStart < this.reviewTagWaitMaxMs) {
+            this.emitGeneratingBlock(currentText, 'stop_not_seen', { elapsedSinceWatchStart });
+            return;
+        }
+
+        if (this.stopSeen) {
+            const stopGoneMs = now - this.stopGoneSince;
+            if (stopGoneMs < this.stopStabilizeMs) {
+                this.emitGeneratingBlock(currentText, 'stop_not_stable', { stopGoneMs });
+                return;
+            }
+        }
+
+        if (isReviewMode && currentText.length < this.minIdleChars && elapsedSinceWatchStart < this.reviewTagWaitMaxMs) {
+            this.emitGeneratingBlock(currentText, 'short_text', { elapsedSinceWatchStart });
+            return;
+        }
+
+        const hasClosingTag = this.containsEvalClosingTag(currentText);
+        if (isReviewMode && !hasClosingTag && elapsedSinceWatchStart < this.reviewTagWaitMaxMs) {
+            this.emitGeneratingBlock(currentText, 'no_closing_tag', { elapsedSinceWatchStart });
+            return;
+        }
+
         if (currentText === this.lastSentContent && !this.isGenerating) return;
 
         this.isGenerating = false;
+        this.lastBlockedReason = '';
         this.lastSentContent = currentText;
+        console.log('GrokAdapter finalize idle', {
+            model: this.modelName,
+            requestId: this.currentRequestId || null,
+            summaryChars: currentText.length,
+            stableTicks: this.stableTicks,
+            stopSeen: this.stopSeen,
+            mode: this.currentMode || 'normal'
+        });
         this.sendUpdate('idle', currentText);
     }
 }

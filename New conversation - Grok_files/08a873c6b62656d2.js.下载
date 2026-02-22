@@ -1,0 +1,6 @@
+
+!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="0cf6a3a5-e29f-509e-b640-db78f38007ea")}catch(e){}}();
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,377082,t=>{t.v(JSON.parse('{"drawer-title":"通知","notifications.action.access-requested":"请求访问您的对话","notifications.action.wants-to-view":"想要查看您的对话","notifications.bell-button.label":"打开通知","notifications.empty":"尚无通知","notifications.error":"加载通知失败","notifications.group.earlier":"更早的","notifications.group.today":"今日","notifications.group.yesterday":"昨日","notifications.ignore-button":"忽略","notifications.ignore-error":"忽略共享请求失败","notifications.ignore-success":"共享请求被忽略","notifications.loading":"正在加载通知…","notifications.retry":"重试","notifications.share-button":"分享","share-button.share-error":"分享对话失败。","team-request-share-button.shared-success":"授予访问权限！"}'))}]);
+
+//# sourceMappingURL=4c3049d883dbfe4c.js.map
+//# debugId=0cf6a3a5-e29f-509e-b640-db78f38007ea

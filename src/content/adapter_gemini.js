@@ -71,7 +71,7 @@ class GeminiAdapter extends AdapterBase {
         return [
             'button[aria-label="Send message"]',
             'button[aria-label="Send"]',
-            'button[aria-label*="发送"]',
+            'button[aria-label*="\u53d1\u9001"]',
             'button.send-button',
             'mat-icon[data-mat-icon-name="send"]'
         ].join(', ');
@@ -79,11 +79,15 @@ class GeminiAdapter extends AdapterBase {
 
     getMessageSelectors() {
         return [
+            '[data-turn-role="model"] .model-response-text',
+            '[data-turn-role="model"] .response-container-content',
+            '[data-message-author-role="assistant"] .response-content',
+            '[data-response-id] .response-content',
+            '[data-response-id] .markdown',
             '.model-response-text',
             '.response-container-content',
             'message-content',
             '.response-content',
-            '[data-response-id] .markdown',
             '[data-message-author-role="assistant"]'
         ];
     }
@@ -135,27 +139,66 @@ class GeminiAdapter extends AdapterBase {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    isVisible(node) {
+        if (!node) return false;
+        return (node.getClientRects() || []).length > 0;
+    }
+
+    isInteractiveButton(node) {
+        if (!node) return false;
+        if (node.disabled) return false;
+        if (String(node.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
+        return this.isVisible(node);
+    }
+
     isGeneratingIndicatorActive() {
         const stopSelectors = [
             'button[aria-label*="Stop"]',
-            'button[aria-label*="停止"]',
+            'button[aria-label*="stop"]',
+            'button[aria-label*="\u505c\u6b62"]',
+            'button[aria-label*="\u4e2d\u6b62"]',
             'button[data-mat-icon-name="stop"]',
+            'mat-icon[data-mat-icon-name="stop"]',
             '[data-testid*="stop"]'
         ].join(', ');
-        const button = document.querySelector(stopSelectors);
-        if (!button) return false;
-        if (button.disabled) return false;
-        if (String(button.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
-        return true;
+        const direct = document.querySelector(stopSelectors);
+        if (direct) {
+            const actionable = direct.matches('button, [role="button"]')
+                ? direct
+                : direct.closest('button, [role="button"]');
+            if (this.isInteractiveButton(actionable || direct)) return true;
+        }
+
+        const candidates = Array.from(document.querySelectorAll('button, [role="button"]'));
+        return candidates.some((node) => {
+            if (!this.isInteractiveButton(node)) return false;
+            const label = [
+                String(node.getAttribute('aria-label') || ''),
+                String(node.getAttribute('title') || ''),
+                String(node.innerText || '')
+            ].join(' ').toLowerCase();
+            return /(stop|stopping|\u505c\u6b62|\u4e2d\u6b62)/i.test(label);
+        });
+    }
+
+    isLikelyComposerNode(node) {
+        if (!node) return false;
+        if (node.isContentEditable) return true;
+        if (node.closest('.ql-editor')) return true;
+        if (node.closest('[contenteditable="true"]')) return true;
+        return false;
     }
 
     getLastAssistantText() {
         for (const selector of this.getMessageSelectors()) {
-            const nodes = Array.from(document.querySelectorAll(selector))
-                .map((node) => String(node.innerText || '').trim())
-                .filter(Boolean);
-            if (nodes.length > 0) {
-                return nodes[nodes.length - 1];
+            const nodes = Array.from(document.querySelectorAll(selector));
+            for (let i = nodes.length - 1; i >= 0; i -= 1) {
+                const node = nodes[i];
+                if (!node) continue;
+                if (this.isLikelyComposerNode(node)) continue;
+                const text = String(node.innerText || '').trim();
+                if (!text) continue;
+                return text;
             }
         }
         return '';

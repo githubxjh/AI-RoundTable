@@ -843,6 +843,10 @@ async function handleReviewStatus(message) {
     task.lastIdleAt = now;
     if (!rawResponseTrimmed) {
         logReviewTrace('idle_empty_summary_ignored', task, { summaryChars: rawResponse.length });
+        logReviewTrace('idle_blocked_reason', task, {
+            reason: 'idle_empty_summary',
+            summaryChars: rawResponse.length
+        });
         scheduleIdleFinalize(task, 'idle_empty_summary');
         return;
     }
@@ -887,9 +891,19 @@ async function finalizeTaskIfReady(task, trigger = 'idle_stable') {
 
         if (!rawResponse) {
             if (!forceFinalize && ageMs < IDLE_MAX_WAIT_MS) {
+                logReviewTrace('idle_blocked_reason', task, {
+                    reason: 'empty_summary',
+                    ageMs,
+                    trigger
+                });
                 scheduleIdleFinalize(task, 'idle_retry_empty');
                 return { ok: false, error: 'waiting_for_non_empty_summary' };
             }
+            logReviewTrace('idle_blocked_reason', task, {
+                reason: 'empty_summary_after_wait',
+                ageMs,
+                trigger
+            });
             clearPendingReviewTask(task.requestId);
             await markEvaluationFailure(task.evaluationId, 'parse_failed', '', {
                 normalizeError: 'empty_summary_after_wait',
@@ -903,6 +917,12 @@ async function finalizeTaskIfReady(task, trigger = 'idle_stable') {
 
         if (!forceFinalize && rawResponse.length < IDLE_MIN_CHARS && ageMs < IDLE_MAX_WAIT_MS) {
             logReviewTrace('idle_wait_short_summary', task, { summaryChars: rawResponse.length, ageMs });
+            logReviewTrace('idle_blocked_reason', task, {
+                reason: 'short_text',
+                summaryChars: rawResponse.length,
+                ageMs,
+                trigger
+            });
             scheduleIdleFinalize(task, 'idle_retry_short');
             return { ok: false, error: 'summary_too_short_waiting' };
         }
@@ -916,6 +936,12 @@ async function finalizeTaskIfReady(task, trigger = 'idle_stable') {
 
         if (!forceFinalize && ageMs < IDLE_MAX_WAIT_MS) {
             logReviewTrace('idle_wait_retry', task, { ageMs, error: finalizeResult.error });
+            logReviewTrace('idle_blocked_reason', task, {
+                reason: 'parse_retry',
+                ageMs,
+                trigger,
+                error: finalizeResult.error || 'parse_failed'
+            });
             scheduleIdleFinalize(task, 'idle_retry_failed');
             return finalizeResult;
         }
@@ -983,6 +1009,7 @@ async function finalizeEvaluationFromSummary(task, rawResponse, options = {}) {
             scoreRows: parseResult.scores.length,
             parseSource: parseResult.parseSource || null,
             finalizeSource: 'local_strict',
+            summaryChars: rawResponse.length,
             trigger
         });
         return { ok: true, finalizeSource: 'local_strict' };
@@ -1072,6 +1099,8 @@ async function finalizeEvaluationFromSummary(task, rawResponse, options = {}) {
     logReviewTrace('deepseek_normalize_done', task, {
         normalizeLatencyMs,
         scoreRows: merged.scores.length,
+        parseSource: parseResult.parseSource || null,
+        summaryChars: rawResponse.length,
         finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural'
     });
     return { ok: true, finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural' };
@@ -1421,6 +1450,7 @@ function extractEvalJsonCandidates(text) {
 function parseEvaluationCandidates(candidates, options = {}) {
     let best = null;
     let lastError = 'No valid score rows';
+    const logContext = options.logContext || null;
 
     candidates.forEach((candidateText, index) => {
         const parsed = parseEvaluationCandidatePayload(candidateText, {
@@ -1435,17 +1465,15 @@ function parseEvaluationCandidates(candidates, options = {}) {
         const contender = {
             ...parsed,
             candidateText,
-            candidateIndex: index
+            candidateIndex: index,
+            templateLike: isTemplateScoreCandidate(candidateText, parsed.scores),
+            reasonRichness: countRichReasonRows(parsed.scores)
         };
         if (!best) {
             best = contender;
             return;
         }
-        if (contender.coverage > best.coverage) {
-            best = contender;
-            return;
-        }
-        if (contender.coverage === best.coverage && contender.candidateIndex > best.candidateIndex) {
+        if (isBetterEvaluationCandidate(contender, best)) {
             best = contender;
         }
     });
@@ -1454,14 +1482,76 @@ function parseEvaluationCandidates(candidates, options = {}) {
         return { ok: false, error: lastError };
     }
 
+    logReviewTrace('parse_candidate_selected', logContext || {}, {
+        candidateCount: candidates.length,
+        candidateIndex: best.candidateIndex,
+        coverage: best.coverage,
+        templateLike: best.templateLike,
+        reasonRichness: best.reasonRichness
+    });
+
     return {
         ok: true,
         scores: best.scores,
         coverage: best.coverage,
         missingSlots: best.missingSlots,
         candidateText: best.candidateText,
-        parseSource: candidates.length > 1 ? 'best_candidate' : 'first_tag'
+        parseSource: candidates.length > 1 ? (best.templateLike ? 'best_candidate_template' : 'best_candidate') : 'first_tag'
     };
+}
+
+function isBetterEvaluationCandidate(contender, current) {
+    if (!current) return true;
+    if ((contender.coverage || 0) !== (current.coverage || 0)) {
+        return (contender.coverage || 0) > (current.coverage || 0);
+    }
+    if (Boolean(contender.templateLike) !== Boolean(current.templateLike)) {
+        return !Boolean(contender.templateLike);
+    }
+    if ((contender.reasonRichness || 0) !== (current.reasonRichness || 0)) {
+        return (contender.reasonRichness || 0) > (current.reasonRichness || 0);
+    }
+    return (contender.candidateIndex || 0) > (current.candidateIndex || 0);
+}
+
+function countRichReasonRows(scores) {
+    const rows = Array.isArray(scores) ? scores : [];
+    return rows.filter((row) => String(row?.reason || '').trim().length >= 12).length;
+}
+
+function isTemplateScoreCandidate(candidateText, scores) {
+    const normalized = String(candidateText || '').trim().toLowerCase();
+    if (!normalized) return false;
+
+    if (
+        normalized.includes('"reason": "short reason"')
+        || normalized.includes('"reason":"short reason"')
+    ) {
+        return true;
+    }
+    if (
+        normalized.includes('"evidence": ["point1", "point2"]')
+        || normalized.includes('"evidence":["point1","point2"]')
+    ) {
+        return true;
+    }
+    if (normalized.includes('json schema') && normalized.includes('scores')) {
+        return true;
+    }
+
+    const rows = Array.isArray(scores) ? scores : [];
+    if (rows.length === 0) return false;
+
+    const reasonTemplateRows = rows.filter((row) => String(row?.reason || '').trim().toLowerCase() === 'short reason').length;
+    const evidenceTemplateRows = rows.filter((row) => {
+        if (!Array.isArray(row?.evidence)) return false;
+        const normalizedEvidence = row.evidence.map((item) => String(item || '').trim().toLowerCase());
+        return normalizedEvidence.length >= 2 && normalizedEvidence[0] === 'point1' && normalizedEvidence[1] === 'point2';
+    }).length;
+
+    if (reasonTemplateRows === rows.length) return true;
+    if (evidenceTemplateRows === rows.length) return true;
+    return false;
 }
 
 function parseEvaluationCandidatePayload(jsonText, options = {}) {
