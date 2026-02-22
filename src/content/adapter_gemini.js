@@ -3,28 +3,108 @@ class GeminiAdapter extends AdapterBase {
     constructor() {
         super('Gemini');
         this.previousContent = '';
+        this._sentRequestAt = new Map();
+        this._sendGuardWindowMs = 3000;
     }
 
     async handleInput(text) {
         console.log("GeminiAdapter: handleInput called");
-        
-        try {
-            await super.handleInput(text);
-        } catch (e) {
-            console.error("GeminiAdapter: Base handleInput failed, trying fallback", e);
+
+        const requestId = this.currentRequestId || null;
+        if (!this.acquireSendLock(requestId)) {
+            console.warn(`GeminiAdapter: duplicate send blocked for requestId=${requestId}`);
+            return;
         }
-        
-        // Fallback Enter key
-        setTimeout(() => {
-            const inputSelector = this.getInputSelector();
-            const inputEl = document.querySelector(inputSelector);
-            if (inputEl) {
-                console.log("GeminiAdapter: Dispatching Enter key...");
-                inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13 }));
-                inputEl.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13 }));
-                inputEl.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, keyCode: 13 }));
+
+        const inputSelector = this.getInputSelector();
+        const inputEl = await this.waitForElement(inputSelector);
+        if (!inputEl) throw new Error(`Input element not found: ${inputSelector}`);
+
+        this.simulateUserInput(inputEl, text);
+        await this.delay(800);
+
+        const sendBtn = this.findSendButton();
+        let sent = false;
+
+        if (sendBtn) {
+            console.log("GeminiAdapter: Clicking send button...");
+            this.simulateClick(sendBtn);
+            sent = true;
+        } else {
+            sent = this.sendByEnter(inputEl);
+            if (sent) {
+                console.log("GeminiAdapter: Fallback to Enter once (send button missing)");
             }
-        }, 1200); 
+        }
+
+        if (!sent) {
+            throw new Error("GeminiAdapter: failed to trigger send");
+        }
+
+        this.onSendPostProcessing();
+    }
+
+    acquireSendLock(requestId) {
+        if (!requestId) return true;
+        const now = Date.now();
+        for (const [id, ts] of this._sentRequestAt.entries()) {
+            if (now - ts > this._sendGuardWindowMs * 2) {
+                this._sentRequestAt.delete(id);
+            }
+        }
+        const lastAt = this._sentRequestAt.get(requestId);
+        if (typeof lastAt === 'number' && now - lastAt < this._sendGuardWindowMs) {
+            return false;
+        }
+        this._sentRequestAt.set(requestId, now);
+        return true;
+    }
+
+    findSendButton() {
+        const selector = this.getSendBtnSelector();
+        const candidates = Array.from(document.querySelectorAll(selector));
+        for (const node of candidates) {
+            const target = this.resolveClickableTarget(node);
+            if (target && this.isSendTargetAvailable(target)) {
+                return target;
+            }
+        }
+        return null;
+    }
+
+    resolveClickableTarget(node) {
+        if (!node) return null;
+        if (node.matches('button, [role="button"]')) return node;
+        return node.closest('button, [role="button"]');
+    }
+
+    isSendTargetAvailable(node) {
+        if (!node) return false;
+        if (node.disabled) return false;
+        if (String(node.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
+        if ((node.getClientRects() || []).length === 0) return false;
+        return true;
+    }
+
+    sendByEnter(inputEl) {
+        if (!inputEl) return false;
+        inputEl.focus();
+        const eventInit = {
+            key: 'Enter',
+            code: 'Enter',
+            which: 13,
+            keyCode: 13,
+            bubbles: true,
+            cancelable: true
+        };
+        inputEl.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+        inputEl.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+        inputEl.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+        return true;
+    }
+
+    delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
     getInputSelector() {

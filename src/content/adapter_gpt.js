@@ -5,12 +5,85 @@ class ChatGPTAdapter extends AdapterBase {
         this.previousContent = '';
     }
 
+    async handleInput(text) {
+        const inputSelector = this.getInputSelector();
+        const inputEl = await this.waitForElement(inputSelector);
+        if (!inputEl) throw new Error(`Input element not found: ${inputSelector}`);
+
+        this.simulateUserInput(inputEl, text);
+        await this.delay(600);
+
+        const sendBtn = this.findSendButton();
+        let sent = false;
+        if (sendBtn) {
+            this.simulateClick(sendBtn);
+            sent = true;
+        } else {
+            sent = this.sendByEnter(inputEl);
+            if (sent) {
+                console.warn('ChatGPTAdapter: send button unavailable, fallback to Enter once');
+            }
+        }
+
+        if (!sent) {
+            throw new Error('ChatGPTAdapter: failed to trigger send');
+        }
+
+        this.onSendPostProcessing();
+    }
+
     getInputSelector() {
         return '#prompt-textarea';
     }
 
     getSendBtnSelector() {
-        return 'button[data-testid="send-button"]';
+        return [
+            'button[data-testid="send-button"]',
+            'button[data-testid="fruitjuice-send-button"]',
+            'button[aria-label="Send prompt"]',
+            'button[aria-label="Send message"]',
+            'button[aria-label*="Send"]'
+        ].join(', ');
+    }
+
+    findSendButton() {
+        const selector = this.getSendBtnSelector();
+        const candidates = Array.from(document.querySelectorAll(selector));
+        for (const node of candidates) {
+            if (this.isSendButtonAvailable(node)) {
+                return node;
+            }
+        }
+        return null;
+    }
+
+    isSendButtonAvailable(node) {
+        if (!node) return false;
+        if (node.disabled) return false;
+        if (String(node.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
+        if ((node.getClientRects() || []).length === 0) return false;
+        return true;
+    }
+
+    sendByEnter(inputEl) {
+        if (!inputEl) return false;
+        inputEl.focus();
+        const eventInit = {
+            key: 'Enter',
+            code: 'Enter',
+            which: 13,
+            keyCode: 13,
+            bubbles: true,
+            cancelable: true
+        };
+        inputEl.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+        inputEl.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+        inputEl.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+        return true;
+    }
+
+    delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
     onSendPostProcessing() {

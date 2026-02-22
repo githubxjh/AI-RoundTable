@@ -31,6 +31,10 @@ const RT_KEYS = {
 
 const RT_SCHEMA_VERSION = 2;
 const REVIEW_TIMEOUT_MS = 180000;
+const DEEPSEEK_API_BASE = 'https://api.deepseek.com/v1/chat/completions';
+const DEEPSEEK_MODEL = 'deepseek-chat';
+const DEEPSEEK_API_KEY = 'sk-f2c70e9702cd4036b679f0626d46b5be';
+const DEEPSEEK_TIMEOUT_MS = 25000;
 
 const DEFAULT_SETTINGS = {
     retentionDays: 30,
@@ -79,6 +83,15 @@ const DEFAULT_SETTINGS = {
 };
 
 const pendingReviewTasks = new Map();
+
+function logReviewTrace(stage, task, extra) {
+    const summary = `roundId=${task?.roundId || '-'} evaluationId=${task?.evaluationId || '-'} requestId=${task?.requestId || '-'} judgeModel=${task?.judgeModel || '-'}`;
+    if (typeof extra === 'undefined') {
+        console.log(`[review:${stage}] ${summary}`);
+        return;
+    }
+    console.log(`[review:${stage}] ${summary}`, extra);
+}
 
 chrome.runtime.onInstalled.addListener(async () => {
     await ensureRtState();
@@ -546,13 +559,25 @@ async function handleRoundStartReview(message) {
             rawResponse: '',
             parsedScores: [],
             status: 'pending',
+            normalizedBy: null,
+            normalizeError: null,
+            normalizeLatencyMs: null,
+            dispatchAt: null,
+            firstIdleAt: null,
+            normalizedAt: null,
             createdAt: Date.now(),
             completedAt: null
         };
 
         evaluations[evaluationId] = evaluation;
         nextRound.evaluationIds.push(evaluationId);
-        dispatchQueue.push({ evaluationId, requestId, judgeModel, promptText });
+        dispatchQueue.push({
+            evaluationId,
+            requestId,
+            roundId: nextRound.roundId,
+            judgeModel,
+            promptText
+        });
     }
 
     rounds[nextRound.roundId] = nextRound;
@@ -570,10 +595,15 @@ async function handleRoundStartReview(message) {
     let skipped = 0;
 
     for (const task of dispatchQueue) {
+        logReviewTrace('dispatch_start', task);
+        const dispatchAt = Date.now();
+        await patchEvaluationFields(task.evaluationId, { dispatchAt });
+
         const tabId = activeTabs[task.judgeModel];
         if (!tabId) {
             skipped += 1;
-            await markEvaluationFailure(task.evaluationId, 'timeout', 'Judge tab unavailable');
+            logReviewTrace('dispatch_failed', task, { reason: 'judge_tab_unavailable' });
+            await markEvaluationFailure(task.evaluationId, 'timeout', 'Judge tab unavailable', { dispatchAt });
             continue;
         }
 
@@ -587,7 +617,8 @@ async function handleRoundStartReview(message) {
 
         if (response && response.error) {
             skipped += 1;
-            await markEvaluationFailure(task.evaluationId, 'timeout', `Send failed: ${response.error}`);
+            logReviewTrace('dispatch_failed', task, { reason: `send_failed:${response.error}` });
+            await markEvaluationFailure(task.evaluationId, 'timeout', `Send failed: ${response.error}`, { dispatchAt });
             continue;
         }
 
@@ -595,10 +626,11 @@ async function handleRoundStartReview(message) {
         registerPendingReviewTask({
             requestId: task.requestId,
             evaluationId: task.evaluationId,
-            roundId: nextRound.roundId,
+            roundId: task.roundId,
             judgeModel: task.judgeModel,
-            repaired: false
+            dispatchAt
         });
+        logReviewTrace('dispatch_done', task, { dispatchAt });
     }
 
     await recomputeRoundRanking(nextRound.roundId);
@@ -735,12 +767,18 @@ function registerPendingReviewTask(task) {
         });
     }, REVIEW_TIMEOUT_MS);
 
-    pendingReviewTasks.set(task.requestId, { ...task, timeoutId });
+    pendingReviewTasks.set(task.requestId, {
+        ...task,
+        firstIdleAt: task.firstIdleAt || null,
+        idleHandling: false,
+        timeoutId
+    });
 }
 
 async function handleReviewStatus(message) {
     const task = findPendingReviewTask(message);
     if (!task) return;
+    logReviewTrace('status_update', task, { status: message.status });
 
     if (message.status === 'generating') {
         emitRoundEvent(task.roundId, 'review_progress', {
@@ -753,81 +791,120 @@ async function handleReviewStatus(message) {
 
     if (message.status !== 'idle') return;
 
-    const parseResult = parseEvaluationResponse(message.summary || '');
+    if (task.idleHandling) {
+        return;
+    }
+    task.idleHandling = true;
+
+    const rawResponse = message.summary || '';
+    const firstIdleAt = Date.now();
+    if (!task.firstIdleAt) {
+        task.firstIdleAt = firstIdleAt;
+        await patchEvaluationFields(task.evaluationId, { firstIdleAt });
+    }
+
+    const parseResult = parseEvaluationResponse(rawResponse);
     if (parseResult.ok) {
         clearPendingReviewTask(task.requestId);
         await completeEvaluation(task.evaluationId, {
             status: 'done',
-            rawResponse: message.summary || '',
+            rawResponse,
             parsedScores: parseResult.scores,
+            normalizedBy: null,
+            normalizeError: null,
+            normalizeLatencyMs: null,
             completedAt: Date.now()
         });
+        logReviewTrace('parse_done', task, { scoreRows: parseResult.scores.length });
         return;
     }
 
-    if (!task.repaired) {
-        const state = await ensureRtState();
-        const evaluation = (state[RT_KEYS.evaluations] || {})[task.evaluationId];
-        if (!evaluation) {
-            clearPendingReviewTask(task.requestId);
-            return;
-        }
+    const state = await ensureRtState();
+    const evaluation = (state[RT_KEYS.evaluations] || {})[task.evaluationId];
+    if (!evaluation) {
+        clearPendingReviewTask(task.requestId);
+        return;
+    }
 
-        const repairPrompt = buildRepairPrompt(message.summary || '');
-        const newRequestId = createId('repair');
-        const tabId = activeTabs[task.judgeModel];
-        if (!tabId) {
-            clearPendingReviewTask(task.requestId);
-            await markEvaluationFailure(task.evaluationId, 'parse_failed', message.summary || '');
-            return;
-        }
+    emitRoundEvent(task.roundId, 'deepseek_normalize_started', {
+        evaluationId: task.evaluationId,
+        judgeModel: task.judgeModel,
+        parseError: parseResult.error || 'parse_failed'
+    });
+    logReviewTrace('deepseek_normalize_started', task, { parseError: parseResult.error || 'parse_failed' });
 
-        const response = await sendMessageToTab(tabId, {
-            type: 'INPUT_PROMPT',
-            text: repairPrompt,
-            model: task.judgeModel,
-            requestId: newRequestId,
-            mode: 'review'
+    const normalizeStart = Date.now();
+    let normalizedResult;
+    try {
+        normalizedResult = await normalizeWithDeepSeek(rawResponse, evaluation.blindMap || {});
+    } catch (error) {
+        normalizedResult = { ok: false, error: error.message || String(error) };
+    }
+    const normalizeLatencyMs = Date.now() - normalizeStart;
+
+    if (normalizedResult.ok) {
+        const normalizedAt = Date.now();
+        clearPendingReviewTask(task.requestId);
+        await completeEvaluation(task.evaluationId, {
+            status: 'done',
+            rawResponse,
+            parsedScores: normalizedResult.scores,
+            normalizedBy: DEEPSEEK_MODEL,
+            normalizeError: null,
+            normalizeLatencyMs,
+            normalizedAt,
+            completedAt: normalizedAt
         });
-
-        if (response && response.error) {
-            clearPendingReviewTask(task.requestId);
-            await markEvaluationFailure(task.evaluationId, 'parse_failed', `Repair send failed: ${response.error}`);
-            return;
-        }
-
-        clearPendingReviewTask(task.requestId, true);
-        registerPendingReviewTask({
-            requestId: newRequestId,
-            evaluationId: task.evaluationId,
-            roundId: task.roundId,
-            judgeModel: task.judgeModel,
-            repaired: true
-        });
-        emitRoundEvent(task.roundId, 'review_progress', {
+        emitRoundEvent(task.roundId, 'deepseek_normalize_done', {
             evaluationId: task.evaluationId,
             judgeModel: task.judgeModel,
-            status: 'repair_sent'
+            normalizeLatencyMs,
+            scoreRows: normalizedResult.scores.length
+        });
+        logReviewTrace('deepseek_normalize_done', task, {
+            normalizeLatencyMs,
+            scoreRows: normalizedResult.scores.length
         });
         return;
     }
 
     clearPendingReviewTask(task.requestId);
-    await markEvaluationFailure(task.evaluationId, 'parse_failed', message.summary || '');
+    await markEvaluationFailure(task.evaluationId, 'parse_failed', rawResponse, {
+        normalizedBy: null,
+        normalizeError: normalizedResult.error || 'deepseek_normalize_failed',
+        normalizeLatencyMs
+    });
+    emitRoundEvent(task.roundId, 'deepseek_normalize_failed', {
+        evaluationId: task.evaluationId,
+        judgeModel: task.judgeModel,
+        error: normalizedResult.error || 'deepseek_normalize_failed',
+        normalizeLatencyMs
+    });
+    logReviewTrace('deepseek_normalize_failed', task, {
+        error: normalizedResult.error || 'deepseek_normalize_failed',
+        normalizeLatencyMs
+    });
 }
 
 async function handleReviewTimeout(requestId) {
     const task = pendingReviewTasks.get(requestId);
     if (!task) return;
+    logReviewTrace('timeout', task);
     clearPendingReviewTask(requestId);
     await markEvaluationFailure(task.evaluationId, 'timeout', 'Evaluation timed out');
 }
 
 async function completeEvaluation(evaluationId, patch) {
+    const updated = await patchEvaluationFields(evaluationId, patch);
+    if (!updated) return;
+    await recomputeRoundRanking(updated.roundId);
+}
+
+async function patchEvaluationFields(evaluationId, patch) {
     const state = await ensureRtState();
     const evaluations = { ...(state[RT_KEYS.evaluations] || {}) };
     const evaluation = evaluations[evaluationId];
-    if (!evaluation) return;
+    if (!evaluation) return null;
 
     evaluations[evaluationId] = {
         ...evaluation,
@@ -835,11 +912,12 @@ async function completeEvaluation(evaluationId, patch) {
     };
 
     await chrome.storage.local.set({ [RT_KEYS.evaluations]: evaluations });
-    await recomputeRoundRanking(evaluation.roundId);
+    return evaluations[evaluationId];
 }
 
-async function markEvaluationFailure(evaluationId, status, rawResponse) {
+async function markEvaluationFailure(evaluationId, status, rawResponse, extraPatch = {}) {
     await completeEvaluation(evaluationId, {
+        ...extraPatch,
         status,
         rawResponse: rawResponse || '',
         parsedScores: [],
@@ -1071,25 +1149,137 @@ function parseEvaluationResponse(text) {
     return { ok: true, scores: normalizedRows };
 }
 
+async function normalizeWithDeepSeek(rawText, blindMapSlots) {
+    const slots = [...new Set(
+        (Array.isArray(blindMapSlots) ? blindMapSlots : Object.keys(blindMapSlots || {}))
+            .map((slot) => normalizeSlot(slot))
+            .filter(Boolean)
+    )];
+    if (slots.length === 0) {
+        return { ok: false, error: 'No blind-map slots available for normalization' };
+    }
+
+    const truncatedRaw = String(rawText || '').slice(0, 20000);
+    const systemPrompt = [
+        'You are a strict JSON normalizer for AI evaluation outputs.',
+        'Return JSON only with this schema: {"scores":[{"slot":"A","accuracy":1,"completeness":1,"actionability":1,"clarity":1,"overall":1,"reason":"","evidence":[]}]}',
+        'Do not output markdown or explanations.',
+        'Only use slots from the provided slot list.',
+        'Each numeric field must be in range 1-10.',
+        'If any required field is missing, fill it with the minimum valid value.'
+    ].join('\n');
+
+    const userPrompt = [
+        `Allowed slots: ${slots.join(', ')}`,
+        'Normalize the following raw evaluation text into strict JSON.',
+        '',
+        'RAW_EVALUATION_TEXT_START',
+        truncatedRaw,
+        'RAW_EVALUATION_TEXT_END'
+    ].join('\n');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_TIMEOUT_MS);
+
+    let response;
+    try {
+        response = await fetch(DEEPSEEK_API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${DEEPSEEK_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: DEEPSEEK_MODEL,
+                temperature: 0,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ]
+            }),
+            signal: controller.signal
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            return { ok: false, error: `DeepSeek timeout after ${DEEPSEEK_TIMEOUT_MS}ms` };
+        }
+        return { ok: false, error: `DeepSeek request failed: ${error.message || String(error)}` };
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
+    if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        return {
+            ok: false,
+            error: `DeepSeek HTTP ${response.status}: ${String(body || '').slice(0, 240)}`
+        };
+    }
+
+    let data;
+    try {
+        data = await response.json();
+    } catch (error) {
+        return { ok: false, error: `DeepSeek JSON decode failed: ${error.message}` };
+    }
+
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content || typeof content !== 'string') {
+        return { ok: false, error: 'DeepSeek response missing choices[0].message.content' };
+    }
+
+    return parseDeepSeekNormalization(content, slots);
+}
+
+function parseDeepSeekNormalization(text, slots) {
+    const allowedSlots = [...new Set((slots || []).map((slot) => normalizeSlot(slot)).filter(Boolean))];
+    if (allowedSlots.length === 0) {
+        return { ok: false, error: 'No allowed slots provided' };
+    }
+
+    const base = parseEvaluationResponse(text);
+    if (!base.ok) {
+        return { ok: false, error: base.error || 'Invalid DeepSeek normalization payload' };
+    }
+
+    const allowedSet = new Set(allowedSlots);
+    const bySlot = {};
+    for (const row of base.scores || []) {
+        const slot = normalizeSlot(row.slot);
+        if (!slot || !allowedSet.has(slot) || bySlot[slot]) continue;
+        bySlot[slot] = {
+            slot,
+            accuracy: clamp(Number(row.accuracy), 1, 10),
+            completeness: clamp(Number(row.completeness), 1, 10),
+            actionability: clamp(Number(row.actionability), 1, 10),
+            clarity: clamp(Number(row.clarity), 1, 10),
+            overall: isFiniteNumber(row.overall) ? clamp(Number(row.overall), 1, 10) : 1,
+            reason: String(row.reason || ''),
+            evidence: Array.isArray(row.evidence) ? row.evidence.slice(0, 3).map((x) => String(x)) : []
+        };
+    }
+
+    const normalizedScores = allowedSlots.map((slot) => {
+        if (bySlot[slot]) return bySlot[slot];
+        return {
+            slot,
+            accuracy: 1,
+            completeness: 1,
+            actionability: 1,
+            clarity: 1,
+            overall: 1,
+            reason: '',
+            evidence: []
+        };
+    });
+
+    return { ok: true, scores: normalizedScores };
+}
+
 function renderPrompt(template, vars) {
     return String(template || '')
         .replaceAll('{{question}}', vars.question || '')
         .replaceAll('{{answers}}', vars.answers || '');
-}
-
-function buildRepairPrompt(previousResponse) {
-    const safe = String(previousResponse || '').slice(0, 12000);
-    return [
-        'Reformat your previous answer into valid JSON only.',
-        'Do not evaluate again. Preserve your original judgment.',
-        'Return exactly one payload wrapped with <EVAL_JSON>...</EVAL_JSON>.',
-        '',
-        'Required JSON shape:',
-        '{"scores":[{"slot":"A","accuracy":1,"completeness":1,"actionability":1,"clarity":1,"overall":1,"reason":"...","evidence":["..."]}]}',
-        '',
-        'Previous response:',
-        safe
-    ].join('\n');
 }
 
 function hydrateRound(round, state) {
@@ -1112,12 +1302,20 @@ function emitRoundEvent(roundId, event, data) {
 }
 
 function findPendingReviewTask(message) {
-    if (message.requestId && pendingReviewTasks.has(message.requestId)) {
-        return pendingReviewTasks.get(message.requestId);
+    if (message.requestId) {
+        return pendingReviewTasks.get(message.requestId) || null;
     }
+
     if (!message.model) return null;
+
+    const matches = [];
     for (const task of pendingReviewTasks.values()) {
-        if (task.judgeModel === message.model) return task;
+        if (task.judgeModel === message.model) {
+            matches.push(task);
+        }
+    }
+    if (matches.length === 1) {
+        return matches[0];
     }
     return null;
 }
