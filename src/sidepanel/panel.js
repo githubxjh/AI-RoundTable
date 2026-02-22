@@ -27,7 +27,8 @@ const state = {
     activeRoundId: null,
     activeRound: null,
     settings: { ...DEFAULT_SETTINGS },
-    latestReviewProgress: null
+    latestReviewProgress: null,
+    selectedCandidateId: null
 };
 
 const refs = {};
@@ -110,6 +111,12 @@ function bindEvents() {
             return;
         }
 
+        const rankRow = target.closest('.rank-row[data-candidate-id]');
+        if (rankRow && refs.resultBoard?.contains(rankRow)) {
+            onToggleCandidateDetails(rankRow.dataset.candidateId || '');
+            return;
+        }
+
         const header = target.closest('.card-header');
         if (header) {
             const card = header.closest('.ai-card');
@@ -178,6 +185,7 @@ async function setActiveRound(roundId) {
     if (!roundId) {
         state.activeRoundId = null;
         state.activeRound = null;
+        state.selectedCandidateId = null;
         renderRound();
         renderReviewProgress();
         renderJudgeStatusList();
@@ -193,11 +201,19 @@ async function setActiveRound(roundId) {
 
     state.activeRoundId = roundId;
     state.activeRound = response.round;
+    if (!isCandidateInActiveRound(state.selectedCandidateId)) {
+        state.selectedCandidateId = null;
+    }
     renderRound();
     renderReviewProgress();
     renderJudgeStatusList();
     renderResultBoard();
     syncCandidateButtons();
+}
+
+function isCandidateInActiveRound(candidateId) {
+    if (!candidateId || !state.activeRound) return false;
+    return (state.activeRound.candidates || []).some((candidate) => candidate.candidateId === candidateId);
 }
 
 async function ensureRoundForBroadcast(question, targetModels) {
@@ -482,6 +498,16 @@ async function onDeleteRound() {
     }
 }
 
+function onToggleCandidateDetails(candidateId) {
+    if (!candidateId) return;
+    if (state.selectedCandidateId === candidateId) {
+        state.selectedCandidateId = null;
+    } else {
+        state.selectedCandidateId = candidateId;
+    }
+    renderResultBoard();
+}
+
 function onResetTemplate() {
     refs.reviewTemplate.value = DEFAULT_SETTINGS.reviewPromptTemplate;
     saveRtSettings({ reviewPromptTemplate: refs.reviewTemplate.value }).catch(console.error);
@@ -587,7 +613,17 @@ function renderJudgeStatusList() {
 function renderResultBoard() {
     const round = state.activeRound;
     if (!round || !Array.isArray(round.ranking) || round.ranking.length === 0) {
-        refs.resultBoard.innerHTML = '<div class="empty">暂无排名结果</div>';
+        refs.resultBoard.innerHTML = '<div class="empty">No ranking results yet.</div>';
+        state.selectedCandidateId = null;
+        return;
+    }
+
+    const doneCount = (round.evaluations || [])
+        .filter((evaluation) => normalizeEvaluationStatus(evaluation.status) === 'done')
+        .length;
+    if (doneCount === 0) {
+        refs.resultBoard.innerHTML = '<div class="empty">No valid judge scores yet.</div>';
+        state.selectedCandidateId = null;
         return;
     }
 
@@ -596,20 +632,106 @@ function renderResultBoard() {
         candidateMap[candidate.candidateId] = candidate;
     });
 
+    const rankingCandidateIds = new Set((round.ranking || []).map((item) => item.candidateId));
+    if (state.selectedCandidateId && !rankingCandidateIds.has(state.selectedCandidateId)) {
+        state.selectedCandidateId = null;
+    }
+
     refs.resultBoard.innerHTML = round.ranking.map((item, index) => {
         const candidate = candidateMap[item.candidateId];
         const model = candidate?.model || 'Unknown';
         const answerSnippet = shorten(candidate?.answerText || '', 180);
         const reasons = collectCandidateReasons(round, item.candidateId);
+        const selected = state.selectedCandidateId === item.candidateId;
+        const detailHtml = selected ? renderCandidateJudgeDetails(round, item.candidateId) : '';
         return `
-            <div class="rank-row">
+            <div class="rank-row ${selected ? 'selected' : ''}" data-candidate-id="${escapeHtml(item.candidateId)}">
                 <div class="rank-title">#${index + 1} ${escapeHtml(model)} | Final ${formatScore(item.finalScore)}</div>
                 <div class="small-muted">raw ${formatScore(item.rawMean)} · normalized ${formatScore(item.normalizedMean)} · non-self ${formatScore(item.nonSelfMean)} · variance ${formatScore(item.variance)}</div>
                 <div style="margin-top:4px;">${escapeHtml(answerSnippet)}</div>
                 ${reasons ? `<div class="small-muted" style="margin-top:4px;">评审理由: ${escapeHtml(reasons)}</div>` : ''}
+                <div class="small-muted" style="margin-top:4px;">${selected ? 'Click to collapse judge details' : 'Click to view judge details'}</div>
+                ${detailHtml}
             </div>
         `;
     }).join('');
+}
+
+function renderCandidateJudgeDetails(round, candidateId) {
+    const rows = buildCandidateJudgeRows(round, candidateId);
+    if (rows.length === 0) {
+        return '<div class="rank-details"><div class="rank-details-empty">No judge detail records.</div></div>';
+    }
+
+    return `
+        <div class="rank-details">
+            ${rows.map(({ evaluation, status, score }) => {
+                const model = evaluation?.judgeModel || 'Unknown';
+                const detail = getEvaluationStatusDetail(evaluation);
+                const sourceTag = evaluation?.normalizedBy
+                    ? `<span class="judge-source-tag">${escapeHtml(String(evaluation.normalizedBy))}</span>`
+                    : '';
+
+                if (status === 'done' && score) {
+                    const evidenceText = Array.isArray(score.evidence) && score.evidence.length > 0
+                        ? score.evidence.map((x) => String(x)).join(' | ')
+                        : '';
+                    return `
+                        <div class="rank-judge-row">
+                            <div class="rank-judge-head">
+                                <div class="rank-judge-left">
+                                    <span class="rank-judge-model">${escapeHtml(model)}</span>
+                                    <span class="status-pill done">done</span>
+                                    ${sourceTag}
+                                </div>
+                            </div>
+                            <div class="rank-judge-metrics">
+                                accuracy ${formatScore(score.accuracy)} | completeness ${formatScore(score.completeness)} | actionability ${formatScore(score.actionability)} | clarity ${formatScore(score.clarity)} | overall ${formatScore(score.overall)}
+                            </div>
+                            ${score.reason ? `<div class="rank-judge-text"><strong>Reason:</strong> ${escapeHtml(score.reason)}</div>` : ''}
+                            ${evidenceText ? `<div class="rank-judge-text"><strong>Evidence:</strong> ${escapeHtml(evidenceText)}</div>` : ''}
+                        </div>
+                    `;
+                }
+
+                return `
+                    <div class="rank-judge-row">
+                        <div class="rank-judge-head">
+                            <div class="rank-judge-left">
+                                <span class="rank-judge-model">${escapeHtml(model)}</span>
+                                <span class="status-pill ${escapeHtml(status)}">${escapeHtml(status)}</span>
+                                ${sourceTag}
+                            </div>
+                        </div>
+                        <div class="rank-judge-text">${escapeHtml(detail)}</div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function buildCandidateJudgeRows(round, candidateId) {
+    const evaluations = Array.isArray(round?.evaluations) ? [...round.evaluations] : [];
+    evaluations.sort((a, b) => String(a?.judgeModel || '').localeCompare(String(b?.judgeModel || '')));
+    return evaluations.map((evaluation) => {
+        const status = normalizeEvaluationStatus(evaluation?.status);
+        const score = status === 'done' ? findCandidateScoreInEvaluation(evaluation, candidateId) : null;
+        return { evaluation, status, score };
+    });
+}
+
+function findCandidateScoreInEvaluation(evaluation, candidateId) {
+    const scores = Array.isArray(evaluation?.parsedScores) ? evaluation.parsedScores : [];
+    for (const score of scores) {
+        const slot = String(score?.slot || '').trim().toUpperCase();
+        if (!slot) continue;
+        const mappedCandidate = evaluation?.blindMap?.[slot];
+        if (mappedCandidate === candidateId) {
+            return score;
+        }
+    }
+    return null;
 }
 
 function collectCandidateReasons(round, candidateId) {
@@ -617,13 +739,8 @@ function collectCandidateReasons(round, candidateId) {
     const reasons = [];
     for (const evaluation of evaluations) {
         if (evaluation.status !== 'done') continue;
-        const scores = Array.isArray(evaluation.parsedScores) ? evaluation.parsedScores : [];
-        for (const score of scores) {
-            const mappedCandidate = evaluation.blindMap?.[String(score.slot || '').toUpperCase()];
-            if (mappedCandidate !== candidateId) continue;
-            if (score.reason) reasons.push(`[${evaluation.judgeModel}] ${score.reason}`);
-            break;
-        }
+        const score = findCandidateScoreInEvaluation(evaluation, candidateId);
+        if (score?.reason) reasons.push(`[${evaluation.judgeModel}] ${score.reason}`);
         if (reasons.length >= 2) break;
     }
     return reasons.join(' | ');
@@ -642,16 +759,28 @@ function getEvaluationStatusDetail(evaluation) {
     const scoreCount = Array.isArray(evaluation?.parsedScores) ? evaluation.parsedScores.length : 0;
 
     if (status === 'done') {
+        const normalizedBy = String(evaluation?.normalizedBy || '').trim();
+        if (normalizedBy) {
+            if (normalizedBy === 'deepseek-chat') {
+                return `Parsed ${scoreCount} score item(s). Scores normalized by deepseek-chat; reason/evidence preserved from raw output.`;
+            }
+            return `Parsed ${scoreCount} score item(s). Normalized by ${normalizedBy}.`;
+        }
         return `Parsed ${scoreCount} score item(s).`;
     }
 
     if (status === 'parse_failed') {
+        const normalizeError = String(evaluation?.normalizeError || '').replace(/\s+/g, ' ').trim();
+        if (normalizeError) {
+            return `Parse failed: ${shorten(normalizeError, 180)}`;
+        }
         const raw = String(evaluation?.rawResponse || '').replace(/\s+/g, ' ').trim();
         return raw ? `Parse failed: ${shorten(raw, 140)}` : 'Parse failed: invalid JSON output.';
     }
 
     if (status === 'timeout') {
-        return 'Timeout: no valid response received within the window.';
+        const raw = String(evaluation?.rawResponse || '').replace(/\s+/g, ' ').trim();
+        return raw ? `Timeout: ${shorten(raw, 140)}` : 'Timeout: no valid response received within the window.';
     }
 
     return 'Waiting for judge response...';

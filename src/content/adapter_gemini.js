@@ -1,15 +1,15 @@
-
 class GeminiAdapter extends AdapterBase {
     constructor() {
         super('Gemini');
         this.previousContent = '';
         this._sentRequestAt = new Map();
         this._sendGuardWindowMs = 3000;
+        this.stableText = '';
+        this.stableTicks = 0;
+        this.lastGeneratingSummary = '';
     }
 
     async handleInput(text) {
-        console.log("GeminiAdapter: handleInput called");
-
         const requestId = this.currentRequestId || null;
         if (!this.acquireSendLock(requestId)) {
             console.warn(`GeminiAdapter: duplicate send blocked for requestId=${requestId}`);
@@ -25,20 +25,18 @@ class GeminiAdapter extends AdapterBase {
 
         const sendBtn = this.findSendButton();
         let sent = false;
-
         if (sendBtn) {
-            console.log("GeminiAdapter: Clicking send button...");
             this.simulateClick(sendBtn);
             sent = true;
         } else {
             sent = this.sendByEnter(inputEl);
             if (sent) {
-                console.log("GeminiAdapter: Fallback to Enter once (send button missing)");
+                console.log('GeminiAdapter: fallback to Enter once (send button missing)');
             }
         }
 
         if (!sent) {
-            throw new Error("GeminiAdapter: failed to trigger send");
+            throw new Error('GeminiAdapter: failed to trigger send');
         }
 
         this.onSendPostProcessing();
@@ -58,6 +56,36 @@ class GeminiAdapter extends AdapterBase {
         }
         this._sentRequestAt.set(requestId, now);
         return true;
+    }
+
+    getInputSelector() {
+        return [
+            'div.ql-editor',
+            'div[contenteditable="true"][role="textbox"]',
+            'div[aria-label="Enter a prompt here"]',
+            'div[aria-label*="prompt"]'
+        ].join(', ');
+    }
+
+    getSendBtnSelector() {
+        return [
+            'button[aria-label="Send message"]',
+            'button[aria-label="Send"]',
+            'button[aria-label*="发送"]',
+            'button.send-button',
+            'mat-icon[data-mat-icon-name="send"]'
+        ].join(', ');
+    }
+
+    getMessageSelectors() {
+        return [
+            '.model-response-text',
+            '.response-container-content',
+            'message-content',
+            '.response-content',
+            '[data-response-id] .markdown',
+            '[data-message-author-role="assistant"]'
+        ];
     }
 
     findSendButton() {
@@ -107,66 +135,84 @@ class GeminiAdapter extends AdapterBase {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
-    getInputSelector() {
-        return 'div.ql-editor, div[contenteditable="true"][role="textbox"], div[aria-label="Enter a prompt here"], div[aria-label*="prompt"]';
+    isGeneratingIndicatorActive() {
+        const stopSelectors = [
+            'button[aria-label*="Stop"]',
+            'button[aria-label*="停止"]',
+            'button[data-mat-icon-name="stop"]',
+            '[data-testid*="stop"]'
+        ].join(', ');
+        const button = document.querySelector(stopSelectors);
+        if (!button) return false;
+        if (button.disabled) return false;
+        if (String(button.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
+        return true;
     }
 
-    getSendBtnSelector() {
-        return 'button[aria-label="Send message"], button[aria-label="Send"], button.send-button, mat-icon[data-mat-icon-name="send"]';
+    getLastAssistantText() {
+        for (const selector of this.getMessageSelectors()) {
+            const nodes = Array.from(document.querySelectorAll(selector))
+                .map((node) => String(node.innerText || '').trim())
+                .filter(Boolean);
+            if (nodes.length > 0) {
+                return nodes[nodes.length - 1];
+            }
+        }
+        return '';
     }
 
     onSendPostProcessing() {
-        // Capture previous content
-        const messageSelector = '.model-response-text, .response-container-content, message-content';
-        const messages = document.querySelectorAll(messageSelector);
-        this.previousContent = messages.length > 0 ? messages[messages.length - 1].innerText : '';
-
+        this.previousContent = this.getLastAssistantText();
         this.lastResponseLength = 0;
         this.isGenerating = true;
         this.expectingNewMessage = true;
+        this.stableText = '';
+        this.stableTicks = 0;
+        this.lastGeneratingSummary = '';
         this.sendUpdate('generating', 'Waiting for response...');
     }
 
     checkForNewResponse() {
-        const messageSelector = '.model-response-text, .response-container-content, message-content';
-        const messages = document.querySelectorAll(messageSelector);
-        
-        if (messages.length === 0) return;
-        
-        const lastMessage = messages[messages.length - 1];
-        const currentText = lastMessage.innerText;
-
-        // Generating detection
-        const stopBtn = document.querySelector('button[aria-label*="Stop"]');
-        const isGenerating = !!stopBtn;
-
-        // Stale check
-        if (this.expectingNewMessage && !isGenerating) {
-             // If content matches previous, it's stale.
-             if (currentText === this.previousContent) return; 
-             
-             // Content changed! It's new.
-             this.expectingNewMessage = false;
-        }
+        const currentText = this.getLastAssistantText();
+        const isGenerating = this.isGeneratingIndicatorActive();
 
         if (isGenerating) {
+            const summary = currentText || 'Generating...';
             this.expectingNewMessage = false;
-            if (this.isGenerating !== isGenerating) {
-                this.isGenerating = isGenerating;
+            this.stableText = '';
+            this.stableTicks = 0;
+            if (!this.isGenerating || summary !== this.lastGeneratingSummary) {
+                this.sendUpdate('generating', summary);
+                this.lastGeneratingSummary = summary;
             }
-            if (currentText !== this.lastSentContent) {
+            this.isGenerating = true;
+            if (currentText) {
                 this.lastSentContent = currentText;
-                this.sendUpdate('generating', currentText);
             }
-        } else {
-             if (this.isGenerating || !this.expectingNewMessage) {
-                this.isGenerating = false;
-                if (currentText !== this.lastSentContent) {
-                    this.lastSentContent = currentText;
-                    this.sendUpdate('idle', currentText);
-                }
-            }
+            return;
         }
+
+        this.lastGeneratingSummary = '';
+        if (!currentText.trim()) return;
+
+        if (this.expectingNewMessage) {
+            if (currentText === this.previousContent) return;
+            this.expectingNewMessage = false;
+        }
+
+        if (currentText !== this.stableText) {
+            this.stableText = currentText;
+            this.stableTicks = 1;
+            return;
+        }
+
+        this.stableTicks += 1;
+        if (this.stableTicks < 2) return;
+        if (currentText === this.lastSentContent && !this.isGenerating) return;
+
+        this.isGenerating = false;
+        this.lastSentContent = currentText;
+        this.sendUpdate('idle', currentText);
     }
 }
 

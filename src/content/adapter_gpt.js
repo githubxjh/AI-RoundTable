@@ -1,8 +1,10 @@
-
 class ChatGPTAdapter extends AdapterBase {
     constructor() {
         super('ChatGPT');
         this.previousContent = '';
+        this.stableText = '';
+        this.stableTicks = 0;
+        this.lastGeneratingSummary = '';
     }
 
     async handleInput(text) {
@@ -46,6 +48,16 @@ class ChatGPTAdapter extends AdapterBase {
         ].join(', ');
     }
 
+    getAssistantMessageSelectors() {
+        return [
+            'div[data-message-author-role="assistant"] .markdown',
+            'div[data-message-author-role="assistant"] [data-message-text]',
+            'article[data-testid*="assistant"] .markdown',
+            '[data-testid*="assistant-turn"] .markdown',
+            'div[data-message-author-role="assistant"]'
+        ];
+    }
+
     findSendButton() {
         const selector = this.getSendBtnSelector();
         const candidates = Array.from(document.querySelectorAll(selector));
@@ -86,68 +98,86 @@ class ChatGPTAdapter extends AdapterBase {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
-    onSendPostProcessing() {
-        // Capture current state before it changes to detect "stale" vs "new"
-        const messages = document.querySelectorAll('div[data-message-author-role="assistant"] .markdown');
-        this.previousContent = messages.length > 0 ? messages[messages.length - 1].innerText : '';
+    isGeneratingIndicatorActive() {
+        const stopSelectors = [
+            'button[aria-label="Stop generating"]',
+            'button[aria-label="Stop"]',
+            'button[aria-label="停止生成"]',
+            'button[aria-label="停止"]',
+            'button[data-testid*="stop"]'
+        ].join(', ');
+        const button = document.querySelector(stopSelectors);
+        if (!button) return false;
+        if (button.disabled) return false;
+        if (String(button.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
+        return true;
+    }
 
-        // Reset state
+    getLastAssistantText() {
+        for (const selector of this.getAssistantMessageSelectors()) {
+            const nodes = Array.from(document.querySelectorAll(selector))
+                .map((node) => String(node.innerText || '').trim())
+                .filter(Boolean);
+            if (nodes.length > 0) {
+                return nodes[nodes.length - 1];
+            }
+        }
+        return '';
+    }
+
+    onSendPostProcessing() {
+        this.previousContent = this.getLastAssistantText();
         this.lastResponseLength = 0;
-        this.isGenerating = true; 
-        this.expectingNewMessage = true; // Flag to ignore old messages
+        this.isGenerating = true;
+        this.expectingNewMessage = true;
+        this.stableText = '';
+        this.stableTicks = 0;
+        this.lastGeneratingSummary = '';
         this.sendUpdate('generating', 'Waiting for response...');
     }
 
     checkForNewResponse() {
-        // 1. Check if generating (Stop button is the most reliable indicator)
-        const stopBtn = document.querySelector('button[aria-label="Stop generating"]');
-        const isGenerating = !!stopBtn;
+        const currentText = this.getLastAssistantText();
+        const isGenerating = this.isGeneratingIndicatorActive();
 
-        // 2. Get last message
-        const messages = document.querySelectorAll('div[data-message-author-role="assistant"] .markdown');
-        if (messages.length === 0) return;
-        
-        const lastMessage = messages[messages.length - 1];
-        const currentText = lastMessage.innerText;
-
-        // Smart Filtering:
-        if (this.expectingNewMessage && !isGenerating) {
-             // We are waiting for the new bubble.
-             // If the text is exactly the same as before we sent, it's definitely stale.
-             if (currentText === this.previousContent) {
-                 return; 
-             }
-             // If it's different, it's likely the new message (even if "generating" isn't caught yet)
-             // But valid new messages usually start empty or small. 
-             // If it's SUDDENLY long and different, it might be a race condition, but we should accept it.
-             this.expectingNewMessage = false; 
-        }
-        
         if (isGenerating) {
-            this.expectingNewMessage = false; // Definitely found it
-            
-            if (this.isGenerating !== isGenerating) {
-                 this.isGenerating = isGenerating;
+            const summary = currentText || 'Generating...';
+            this.expectingNewMessage = false;
+            this.stableText = '';
+            this.stableTicks = 0;
+            if (!this.isGenerating || summary !== this.lastGeneratingSummary) {
+                this.sendUpdate('generating', summary);
+                this.lastGeneratingSummary = summary;
             }
-            
-            // Only update if text changed
-            if (currentText !== this.lastSentContent) {
+            this.isGenerating = true;
+            if (currentText) {
                 this.lastSentContent = currentText;
-                this.sendUpdate('generating', currentText);
             }
-        } else {
-            // Not generating, but we have new text
-            if (this.isGenerating || !this.expectingNewMessage) {
-                this.isGenerating = false;
-                // Only send final update if it's different/meaningful
-                if (currentText !== this.lastSentContent) {
-                    this.lastSentContent = currentText;
-                    this.sendUpdate('idle', currentText); 
-                }
-            }
+            return;
         }
+
+        this.lastGeneratingSummary = '';
+        if (!currentText.trim()) return;
+
+        if (this.expectingNewMessage) {
+            if (currentText === this.previousContent) return;
+            this.expectingNewMessage = false;
+        }
+
+        if (currentText !== this.stableText) {
+            this.stableText = currentText;
+            this.stableTicks = 1;
+            return;
+        }
+
+        this.stableTicks += 1;
+        if (this.stableTicks < 2) return;
+        if (currentText === this.lastSentContent && !this.isGenerating) return;
+
+        this.isGenerating = false;
+        this.lastSentContent = currentText;
+        this.sendUpdate('idle', currentText);
     }
 }
 
-// Initialize
 new ChatGPTAdapter();

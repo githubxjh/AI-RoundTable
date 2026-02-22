@@ -349,6 +349,87 @@
             background: #fff;
             font-size: 12px;
             line-height: 1.45;
+            transition: border-color 0.15s ease, background-color 0.15s ease;
+        }
+
+        .rank-row[data-candidate-id] {
+            cursor: pointer;
+        }
+
+        .rank-row[data-candidate-id]:hover {
+            border-color: #93c5fd;
+            background: #f8fbff;
+        }
+
+        .rank-row.selected {
+            border-color: #60a5fa;
+            background: #eff6ff;
+        }
+
+        .rank-details {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed #bfdbfe;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .rank-details-empty {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .rank-judge-row {
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #fff;
+            padding: 6px 8px;
+        }
+
+        .rank-judge-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .rank-judge-left {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .rank-judge-model {
+            font-weight: 700;
+            color: #1f2937;
+        }
+
+        .judge-source-tag {
+            border: 1px solid #bfdbfe;
+            border-radius: 999px;
+            background: #dbeafe;
+            color: #1d4ed8;
+            font-size: 10px;
+            padding: 1px 6px;
+            font-weight: 700;
+        }
+
+        .rank-judge-metrics {
+            margin-top: 4px;
+            color: #374151;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+
+        .rank-judge-text {
+            margin-top: 4px;
+            color: #4b5563;
+            font-size: 11px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-break: break-word;
         }
 
         .rank-title {

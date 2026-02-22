@@ -35,6 +35,9 @@ const DEEPSEEK_API_BASE = 'https://api.deepseek.com/v1/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-chat';
 const DEEPSEEK_API_KEY = 'sk-f2c70e9702cd4036b679f0626d46b5be';
 const DEEPSEEK_TIMEOUT_MS = 25000;
+const IDLE_STABILIZE_MS = 1500;
+const IDLE_MIN_CHARS = 80;
+const IDLE_MAX_WAIT_MS = 12000;
 
 const DEFAULT_SETTINGS = {
     retentionDays: 30,
@@ -50,20 +53,20 @@ const DEFAULT_SETTINGS = {
     blindReview: true,
     isolationMode: 'reuse_current_chat',
     reviewPromptTemplate: [
-        '你是一名客观中立的评审员。',
-        '问题：',
+        'You are a neutral and rigorous evaluator.',
+        'Question:',
         '{{question}}',
         '',
-        '请评估以下匿名答案：',
+        'Evaluate the following anonymized answers:',
         '{{answers}}',
         '',
-        '评分规则（每个维度 1-10 分）：accuracy（准确性）、completeness（完整性）、actionability（可执行性）、clarity（清晰度）。',
+        'Scoring dimensions (1-10 each): accuracy, completeness, actionability, clarity.',
         'overall = accuracy*0.4 + completeness*0.25 + actionability*0.2 + clarity*0.15',
         '',
-        '只输出一个 JSON 对象，并用以下标签包裹：',
+        'Output one JSON object wrapped with tags:',
         '<EVAL_JSON>{...}</EVAL_JSON>',
         '',
-        'JSON 结构：',
+        'JSON schema:',
         '{',
         '  "scores": [',
         '    {',
@@ -78,7 +81,7 @@ const DEFAULT_SETTINGS = {
         '    }',
         '  ]',
         '}',
-        '不要输出 Markdown。不要在 <EVAL_JSON> 标签外输出任何额外文本。'
+        'Do not output markdown or any text outside <EVAL_JSON> tags.'
     ].join('\n')
 };
 
@@ -383,7 +386,7 @@ async function handleRoundAddCandidate(message) {
             };
         }
 
-        const question = String(message.questionIfCreate || '').trim() || '手动回合';
+        const question = String(message.questionIfCreate || '').trim() || '\u624b\u52a8\u56de\u5408';
         const targetModels = [...new Set(
             (Array.isArray(message.targetModelsIfCreate) ? message.targetModelsIfCreate : [])
                 .map((item) => String(item || '').trim())
@@ -558,13 +561,21 @@ async function handleRoundStartReview(message) {
             blindMap,
             rawResponse: '',
             parsedScores: [],
+            rawParsedScores: [],
             status: 'pending',
             normalizedBy: null,
             normalizeError: null,
             normalizeLatencyMs: null,
+            parseSource: null,
+            rawSummaryChars: null,
             dispatchAt: null,
             firstIdleAt: null,
+            firstGeneratingAt: null,
+            lastGeneratingAt: null,
             normalizedAt: null,
+            finalizeSource: null,
+            finalizedAt: null,
+            finalizeAttempts: 0,
             createdAt: Date.now(),
             completedAt: null
         };
@@ -769,10 +780,32 @@ function registerPendingReviewTask(task) {
 
     pendingReviewTasks.set(task.requestId, {
         ...task,
+        lastIdleAt: null,
+        lastSummary: '',
         firstIdleAt: task.firstIdleAt || null,
-        idleHandling: false,
+        idleTimerId: null,
+        firstGeneratingAt: null,
+        lastGeneratingAt: null,
+        finalizeAttempts: 0,
+        finalizing: false,
         timeoutId
     });
+}
+
+function clearIdleFinalizeTimer(task) {
+    if (!task?.idleTimerId) return;
+    clearTimeout(task.idleTimerId);
+    task.idleTimerId = null;
+}
+
+function scheduleIdleFinalize(task, reason = 'idle_stable') {
+    if (!task || !pendingReviewTasks.has(task.requestId)) return;
+    clearIdleFinalizeTimer(task);
+    task.idleTimerId = setTimeout(() => {
+        finalizeTaskIfReady(task, reason).catch((error) => {
+            console.error('Finalize task error:', error);
+        });
+    }, IDLE_STABILIZE_MS);
 }
 
 async function handleReviewStatus(message) {
@@ -780,7 +813,16 @@ async function handleReviewStatus(message) {
     if (!task) return;
     logReviewTrace('status_update', task, { status: message.status });
 
+    const now = Date.now();
     if (message.status === 'generating') {
+        if (!task.firstGeneratingAt) {
+            task.firstGeneratingAt = now;
+            patchEvaluationFields(task.evaluationId, { firstGeneratingAt: now }).catch(() => {});
+        }
+        task.lastGeneratingAt = now;
+        patchEvaluationFields(task.evaluationId, { lastGeneratingAt: now }).catch(() => {});
+        clearIdleFinalizeTimer(task);
+
         emitRoundEvent(task.roundId, 'review_progress', {
             evaluationId: task.evaluationId,
             judgeModel: task.judgeModel,
@@ -791,40 +833,165 @@ async function handleReviewStatus(message) {
 
     if (message.status !== 'idle') return;
 
-    if (task.idleHandling) {
-        return;
-    }
-    task.idleHandling = true;
-
-    const rawResponse = message.summary || '';
-    const firstIdleAt = Date.now();
+    const rawResponse = String(message.summary || '');
+    const rawResponseTrimmed = rawResponse.trim();
+    const firstIdleAt = now;
     if (!task.firstIdleAt) {
         task.firstIdleAt = firstIdleAt;
         await patchEvaluationFields(task.evaluationId, { firstIdleAt });
     }
+    task.lastIdleAt = now;
+    if (!rawResponseTrimmed) {
+        logReviewTrace('idle_empty_summary_ignored', task, { summaryChars: rawResponse.length });
+        scheduleIdleFinalize(task, 'idle_empty_summary');
+        return;
+    }
+    task.lastSummary = rawResponse;
+    logReviewTrace('idle_deferred', task, { summaryChars: rawResponseTrimmed.length });
+    scheduleIdleFinalize(task, 'idle_stable');
+}
 
-    const parseResult = parseEvaluationResponse(rawResponse);
-    if (parseResult.ok) {
+function getTaskAgeMs(task) {
+    if (!task) return 0;
+    const startAt = Number(task.dispatchAt || Date.now());
+    return Math.max(0, Date.now() - startAt);
+}
+
+async function finalizeTaskIfReady(task, trigger = 'idle_stable') {
+    if (!task || !pendingReviewTasks.has(task.requestId)) return { ok: false, error: 'task_missing' };
+    if (task.finalizing) return { ok: false, error: 'already_finalizing' };
+
+    task.finalizing = true;
+    clearIdleFinalizeTimer(task);
+
+    try {
+        let rawResponse = String(task.lastSummary || '').trim();
+        const ageMs = getTaskAgeMs(task);
+        const forceFinalize = trigger === 'timeout_fallback';
+
+        if (!rawResponse) {
+            const summaryResult = await resolveModelStateSummaryForTask(task);
+            if (summaryResult.ok) {
+                rawResponse = summaryResult.summary;
+                task.lastSummary = rawResponse;
+                logReviewTrace('modelstate_summary_used', task, {
+                    sameRequest: summaryResult.sameRequest,
+                    uniquePendingByModel: summaryResult.uniquePendingByModel,
+                    summaryChars: rawResponse.length,
+                    trigger
+                });
+            } else {
+                logReviewTrace('modelstate_summary_unavailable', task, { reason: summaryResult.error, trigger });
+            }
+        }
+
+        if (!rawResponse) {
+            if (!forceFinalize && ageMs < IDLE_MAX_WAIT_MS) {
+                scheduleIdleFinalize(task, 'idle_retry_empty');
+                return { ok: false, error: 'waiting_for_non_empty_summary' };
+            }
+            clearPendingReviewTask(task.requestId);
+            await markEvaluationFailure(task.evaluationId, 'parse_failed', '', {
+                normalizeError: 'empty_summary_after_wait',
+                finalizeSource: forceFinalize ? 'timeout_fallback' : null,
+                finalizedAt: Date.now(),
+                finalizeAttempts: task.finalizeAttempts,
+                rawSummaryChars: 0
+            });
+            return { ok: false, error: 'empty_summary_after_wait' };
+        }
+
+        if (!forceFinalize && rawResponse.length < IDLE_MIN_CHARS && ageMs < IDLE_MAX_WAIT_MS) {
+            logReviewTrace('idle_wait_short_summary', task, { summaryChars: rawResponse.length, ageMs });
+            scheduleIdleFinalize(task, 'idle_retry_short');
+            return { ok: false, error: 'summary_too_short_waiting' };
+        }
+
+        task.finalizeAttempts = Number(task.finalizeAttempts || 0) + 1;
+        const finalizeResult = await finalizeEvaluationFromSummary(task, rawResponse, { trigger });
+        if (finalizeResult.ok) {
+            clearPendingReviewTask(task.requestId);
+            return finalizeResult;
+        }
+
+        if (!forceFinalize && ageMs < IDLE_MAX_WAIT_MS) {
+            logReviewTrace('idle_wait_retry', task, { ageMs, error: finalizeResult.error });
+            scheduleIdleFinalize(task, 'idle_retry_failed');
+            return finalizeResult;
+        }
+
         clearPendingReviewTask(task.requestId);
+        await markEvaluationFailure(task.evaluationId, 'parse_failed', rawResponse, {
+            normalizedBy: null,
+            normalizeError: finalizeResult.error || 'parse_failed',
+            finalizeSource: forceFinalize ? 'timeout_fallback' : null,
+            finalizedAt: Date.now(),
+            finalizeAttempts: task.finalizeAttempts,
+            rawSummaryChars: rawResponse.length
+        });
+        return finalizeResult;
+    } finally {
+        if (pendingReviewTasks.has(task.requestId)) {
+            const aliveTask = pendingReviewTasks.get(task.requestId);
+            if (aliveTask) {
+                aliveTask.finalizing = false;
+            }
+        }
+    }
+}
+
+async function finalizeEvaluationFromSummary(task, rawResponse, options = {}) {
+    const trigger = String(options.trigger || 'idle_stable');
+
+    const state = await ensureRtState();
+    const evaluations = state[RT_KEYS.evaluations] || {};
+    const rounds = state[RT_KEYS.rounds] || {};
+    const evaluation = evaluations[task.evaluationId];
+    if (!evaluation) {
+        return { ok: false, error: 'evaluation_not_found' };
+    }
+
+    const round = rounds[evaluation.roundId];
+    const expectedSlots = Object.keys(evaluation.blindMap || {})
+        .map((slot) => normalizeSlot(slot))
+        .filter(Boolean);
+    const weights = sanitizeWeights(round?.config?.weights || DEFAULT_SETTINGS.weights);
+
+    const parseResult = parseEvaluationResponse(rawResponse, {
+        expectedSlots,
+        weights,
+        logContext: task
+    });
+    if (parseResult.ok) {
+        const completedAt = Date.now();
         await completeEvaluation(task.evaluationId, {
             status: 'done',
             rawResponse,
             parsedScores: parseResult.scores,
+            rawParsedScores: parseResult.scores,
             normalizedBy: null,
             normalizeError: null,
             normalizeLatencyMs: null,
-            completedAt: Date.now()
+            parseSource: parseResult.parseSource || null,
+            rawSummaryChars: rawResponse.length,
+            finalizeSource: 'local_strict',
+            finalizedAt: completedAt,
+            finalizeAttempts: task.finalizeAttempts,
+            completedAt
         });
-        logReviewTrace('parse_done', task, { scoreRows: parseResult.scores.length });
-        return;
+        logReviewTrace('parse_done', task, {
+            scoreRows: parseResult.scores.length,
+            parseSource: parseResult.parseSource || null,
+            finalizeSource: 'local_strict',
+            trigger
+        });
+        return { ok: true, finalizeSource: 'local_strict' };
     }
 
-    const state = await ensureRtState();
-    const evaluation = (state[RT_KEYS.evaluations] || {})[task.evaluationId];
-    if (!evaluation) {
-        clearPendingReviewTask(task.requestId);
-        return;
-    }
+    const rawExtract = extractRawScoreRowsLenient(rawResponse, {
+        logContext: task,
+        weights
+    });
 
     emitRoundEvent(task.roundId, 'deepseek_normalize_started', {
         evaluationId: task.evaluationId,
@@ -836,62 +1003,152 @@ async function handleReviewStatus(message) {
     const normalizeStart = Date.now();
     let normalizedResult;
     try {
-        normalizedResult = await normalizeWithDeepSeek(rawResponse, evaluation.blindMap || {});
+        normalizedResult = await normalizeWithDeepSeek(rawResponse, evaluation.blindMap || {}, {
+            logContext: task
+        });
     } catch (error) {
         normalizedResult = { ok: false, error: error.message || String(error) };
     }
     const normalizeLatencyMs = Date.now() - normalizeStart;
 
-    if (normalizedResult.ok) {
-        const normalizedAt = Date.now();
-        clearPendingReviewTask(task.requestId);
-        await completeEvaluation(task.evaluationId, {
-            status: 'done',
-            rawResponse,
-            parsedScores: normalizedResult.scores,
-            normalizedBy: DEEPSEEK_MODEL,
-            normalizeError: null,
-            normalizeLatencyMs,
-            normalizedAt,
-            completedAt: normalizedAt
-        });
-        emitRoundEvent(task.roundId, 'deepseek_normalize_done', {
+    if (!normalizedResult.ok) {
+        const failure = buildNormalizeFailureMessage(parseResult.error, normalizedResult.error, null);
+        emitRoundEvent(task.roundId, 'deepseek_normalize_failed', {
             evaluationId: task.evaluationId,
             judgeModel: task.judgeModel,
-            normalizeLatencyMs,
-            scoreRows: normalizedResult.scores.length
+            error: failure,
+            normalizeLatencyMs
         });
-        logReviewTrace('deepseek_normalize_done', task, {
-            normalizeLatencyMs,
-            scoreRows: normalizedResult.scores.length
+        logReviewTrace('deepseek_normalize_failed', task, {
+            error: failure,
+            normalizeLatencyMs
         });
-        return;
+        return { ok: false, error: failure };
     }
 
-    clearPendingReviewTask(task.requestId);
-    await markEvaluationFailure(task.evaluationId, 'parse_failed', rawResponse, {
-        normalizedBy: null,
-        normalizeError: normalizedResult.error || 'deepseek_normalize_failed',
-        normalizeLatencyMs
+    const merged = mergeStructuralScores(rawExtract, normalizedResult.scores, expectedSlots, {
+        weights,
+        logContext: task
     });
-    emitRoundEvent(task.roundId, 'deepseek_normalize_failed', {
+    if (!merged.ok) {
+        const failure = buildNormalizeFailureMessage(parseResult.error, 'deepseek_ok', merged.error);
+        emitRoundEvent(task.roundId, 'deepseek_normalize_failed', {
+            evaluationId: task.evaluationId,
+            judgeModel: task.judgeModel,
+            error: failure,
+            normalizeLatencyMs
+        });
+        logReviewTrace('deepseek_merge_failed', task, {
+            error: failure,
+            normalizeLatencyMs
+        });
+        return { ok: false, error: failure };
+    }
+
+    const normalizedAt = Date.now();
+    await completeEvaluation(task.evaluationId, {
+        status: 'done',
+        rawResponse,
+        parsedScores: merged.scores,
+        rawParsedScores: rawExtract,
+        normalizedBy: DEEPSEEK_MODEL,
+        normalizeError: null,
+        normalizeLatencyMs,
+        parseSource: parseResult.parseSource || 'best_candidate',
+        rawSummaryChars: rawResponse.length,
+        normalizedAt,
+        finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural',
+        finalizedAt: normalizedAt,
+        finalizeAttempts: task.finalizeAttempts,
+        completedAt: normalizedAt
+    });
+
+    emitRoundEvent(task.roundId, 'deepseek_normalize_done', {
         evaluationId: task.evaluationId,
         judgeModel: task.judgeModel,
-        error: normalizedResult.error || 'deepseek_normalize_failed',
-        normalizeLatencyMs
+        normalizeLatencyMs,
+        scoreRows: merged.scores.length
     });
-    logReviewTrace('deepseek_normalize_failed', task, {
-        error: normalizedResult.error || 'deepseek_normalize_failed',
-        normalizeLatencyMs
+    logReviewTrace('deepseek_normalize_done', task, {
+        normalizeLatencyMs,
+        scoreRows: merged.scores.length,
+        finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural'
     });
+    return { ok: true, finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural' };
 }
 
 async function handleReviewTimeout(requestId) {
     const task = pendingReviewTasks.get(requestId);
     if (!task) return;
     logReviewTrace('timeout', task);
+    clearIdleFinalizeTimer(task);
+
+    const fallbackResult = await tryFinalizeFromModelState(task);
+    if (fallbackResult.ok) {
+        clearPendingReviewTask(requestId);
+        return;
+    }
+
     clearPendingReviewTask(requestId);
-    await markEvaluationFailure(task.evaluationId, 'timeout', 'Evaluation timed out');
+    await markEvaluationFailure(task.evaluationId, 'timeout', 'Evaluation timed out', {
+        normalizeError: fallbackResult.error || null,
+        finalizeSource: 'timeout_fallback',
+        finalizedAt: Date.now(),
+        finalizeAttempts: task.finalizeAttempts,
+        rawSummaryChars: String(task.lastSummary || '').trim().length || 0
+    });
+}
+
+async function tryFinalizeFromModelState(task) {
+    const summaryResult = await resolveModelStateSummaryForTask(task);
+    if (!summaryResult.ok) {
+        if (summaryResult.error === 'modelstate_summary_missing') {
+            return { ok: false, error: 'timeout_fallback_no_model_summary' };
+        }
+        return { ok: false, error: 'timeout_fallback_request_mismatch' };
+    }
+
+    task.lastSummary = summaryResult.summary;
+    logReviewTrace('timeout_fallback_started', task, {
+        sameRequest: summaryResult.sameRequest,
+        uniquePendingByModel: summaryResult.uniquePendingByModel,
+        summaryChars: summaryResult.summary.length
+    });
+
+    const finalizeResult = await finalizeTaskIfReady(task, 'timeout_fallback');
+    if (!finalizeResult.ok) {
+        return { ok: false, error: finalizeResult.error || 'timeout_fallback_finalize_failed' };
+    }
+    logReviewTrace('timeout_fallback_done', task, { finalizeSource: finalizeResult.finalizeSource || 'unknown' });
+    return { ok: true };
+}
+
+async function resolveModelStateSummaryForTask(task) {
+    const state = await ensureRtState();
+    const modelState = (state[RT_KEYS.modelState] || {})[task.judgeModel] || null;
+    const summary = String(modelState?.lastSummary || '').trim();
+    if (!summary) {
+        return { ok: false, error: 'modelstate_summary_missing' };
+    }
+
+    const sameRequest = Boolean(modelState?.requestId) && modelState.requestId === task.requestId;
+    const sameModelTasks = [...pendingReviewTasks.values()].filter((item) => item.judgeModel === task.judgeModel);
+    const uniquePendingByModel = sameModelTasks.length === 1 && sameModelTasks[0].requestId === task.requestId;
+    if (!sameRequest && !uniquePendingByModel) {
+        return {
+            ok: false,
+            error: 'modelstate_request_mismatch',
+            sameRequest,
+            uniquePendingByModel
+        };
+    }
+
+    return {
+        ok: true,
+        summary,
+        sameRequest,
+        uniquePendingByModel
+    };
 }
 
 async function completeEvaluation(evaluationId, patch) {
@@ -1091,25 +1348,125 @@ function computeRanking(round, candidates, evaluations) {
     }));
 }
 
-function parseEvaluationResponse(text) {
+function parseEvaluationResponse(text, options = {}) {
     if (!text || typeof text !== 'string') {
         return { ok: false, error: 'Empty response' };
     }
 
-    let jsonText = null;
-    const tagMatch = text.match(/<EVAL_JSON>([\s\S]*?)<\/EVAL_JSON>/i);
-    if (tagMatch && tagMatch[1]) {
-        jsonText = tagMatch[1].trim();
-    } else {
+    const expectedSlots = [...new Set(
+        (Array.isArray(options.expectedSlots) ? options.expectedSlots : [])
+            .map((slot) => normalizeSlot(slot))
+            .filter(Boolean)
+    )];
+    const weights = sanitizeWeights(options.weights || DEFAULT_SETTINGS.weights);
+    const logContext = options.logContext || null;
+
+    const candidates = extractEvalJsonCandidates(text);
+    if (candidates.length === 0) {
         const firstBrace = text.indexOf('{');
         const lastBrace = text.lastIndexOf('}');
         if (firstBrace >= 0 && lastBrace > firstBrace) {
-            jsonText = text.slice(firstBrace, lastBrace + 1).trim();
+            candidates.push(text.slice(firstBrace, lastBrace + 1).trim());
         }
     }
-
-    if (!jsonText) {
+    if (candidates.length === 0) {
         return { ok: false, error: 'Missing JSON payload' };
+    }
+
+    const selected = parseEvaluationCandidates(candidates, {
+        expectedSlots,
+        weights,
+        logContext
+    });
+    if (!selected.ok) {
+        return {
+            ok: false,
+            error: selected.error || 'No valid score rows',
+            parseSource: selected.parseSource || null
+        };
+    }
+
+    if (expectedSlots.length > 0 && selected.missingSlots.length > 0) {
+        logReviewTrace('parse_missing_slots', logContext || {}, { missingSlots: selected.missingSlots });
+        return {
+            ok: false,
+            error: `Missing expected slots: ${selected.missingSlots.join(', ')}`,
+            parseSource: selected.parseSource || null,
+            candidateText: selected.candidateText || ''
+        };
+    }
+
+    return {
+        ok: true,
+        scores: selected.scores,
+        parseSource: selected.parseSource || null,
+        candidateText: selected.candidateText || ''
+    };
+}
+
+function extractEvalJsonCandidates(text) {
+    const source = String(text || '');
+    if (!source.trim()) return [];
+
+    const tagRegex = /<EVAL_JSON>([\s\S]*?)<\/EVAL_JSON>/gi;
+    const tagged = [...source.matchAll(tagRegex)]
+        .map((match) => String(match[1] || '').trim())
+        .filter(Boolean);
+    if (tagged.length > 0) {
+        return tagged;
+    }
+    return [];
+}
+
+function parseEvaluationCandidates(candidates, options = {}) {
+    let best = null;
+    let lastError = 'No valid score rows';
+
+    candidates.forEach((candidateText, index) => {
+        const parsed = parseEvaluationCandidatePayload(candidateText, {
+            ...options,
+            strictExpectedCoverage: false
+        });
+        if (!parsed.ok) {
+            lastError = parsed.error || lastError;
+            return;
+        }
+
+        const contender = {
+            ...parsed,
+            candidateText,
+            candidateIndex: index
+        };
+        if (!best) {
+            best = contender;
+            return;
+        }
+        if (contender.coverage > best.coverage) {
+            best = contender;
+            return;
+        }
+        if (contender.coverage === best.coverage && contender.candidateIndex > best.candidateIndex) {
+            best = contender;
+        }
+    });
+
+    if (!best) {
+        return { ok: false, error: lastError };
+    }
+
+    return {
+        ok: true,
+        scores: best.scores,
+        coverage: best.coverage,
+        missingSlots: best.missingSlots,
+        candidateText: best.candidateText,
+        parseSource: candidates.length > 1 ? 'best_candidate' : 'first_tag'
+    };
+}
+
+function parseEvaluationCandidatePayload(jsonText, options = {}) {
+    if (!jsonText || typeof jsonText !== 'string') {
+        return { ok: false, error: 'Missing candidate JSON payload' };
     }
 
     let parsed;
@@ -1119,37 +1476,429 @@ function parseEvaluationResponse(text) {
         return { ok: false, error: `JSON parse error: ${error.message}` };
     }
 
+    const expectedSlots = [...new Set(
+        (Array.isArray(options.expectedSlots) ? options.expectedSlots : [])
+            .map((slot) => normalizeSlot(slot))
+            .filter(Boolean)
+    )];
+    const expectedSet = expectedSlots.length > 0 ? new Set(expectedSlots) : null;
+    const weights = sanitizeWeights(options.weights || DEFAULT_SETTINGS.weights);
+    const logContext = options.logContext || null;
+    const strictExpectedCoverage = options.strictExpectedCoverage !== false;
+
     const rows = Array.isArray(parsed?.scores) ? parsed.scores : null;
     if (!rows) {
         return { ok: false, error: 'scores[] not found' };
     }
 
-    const normalizedRows = rows
-        .map((row) => {
-            const slot = normalizeSlot(row.slot);
-            if (!slot) return null;
+    const normalizedRows = [];
+    const seenSlots = new Set();
 
-            return {
-                slot,
-                accuracy: clamp(Number(row.accuracy), 1, 10),
-                completeness: clamp(Number(row.completeness), 1, 10),
-                actionability: clamp(Number(row.actionability), 1, 10),
-                clarity: clamp(Number(row.clarity), 1, 10),
-                overall: isFiniteNumber(row.overall) ? clamp(Number(row.overall), 1, 10) : null,
-                reason: String(row.reason || ''),
-                evidence: Array.isArray(row.evidence) ? row.evidence.slice(0, 3).map((x) => String(x)) : []
-            };
-        })
-        .filter(Boolean);
+    rows.forEach((row, index) => {
+        const slot = normalizeSlot(row?.slot);
+        if (!slot) {
+            logRejectedScoreRow(logContext, index, 'missing_slot', row);
+            return;
+        }
+        if (expectedSet && !expectedSet.has(slot)) {
+            logRejectedScoreRow(logContext, index, `unexpected_slot:${slot}`, row);
+            return;
+        }
+        if (seenSlots.has(slot)) {
+            logRejectedScoreRow(logContext, index, `duplicate_slot:${slot}`, row);
+            return;
+        }
+
+        const accuracy = coerceScore10(row?.accuracy);
+        if (accuracy === null) {
+            logRejectedScoreRow(logContext, index, `invalid_accuracy:${slot}`, row);
+            return;
+        }
+
+        const completeness = coerceScore10(row?.completeness);
+        if (completeness === null) {
+            logRejectedScoreRow(logContext, index, `invalid_completeness:${slot}`, row);
+            return;
+        }
+
+        const actionability = coerceScore10(row?.actionability);
+        if (actionability === null) {
+            logRejectedScoreRow(logContext, index, `invalid_actionability:${slot}`, row);
+            return;
+        }
+
+        const clarity = coerceScore10(row?.clarity);
+        if (clarity === null) {
+            logRejectedScoreRow(logContext, index, `invalid_clarity:${slot}`, row);
+            return;
+        }
+
+        const computedOverall = computeWeightedOverall({
+            accuracy,
+            completeness,
+            actionability,
+            clarity
+        }, weights);
+        const parsedOverall = coerceScore10(row?.overall);
+        const overallProvided = hasProvidedValue(row?.overall);
+        const overall = parsedOverall === null ? computedOverall : parsedOverall;
+        if (overallProvided && parsedOverall === null) {
+            logRejectedScoreRow(logContext, index, `invalid_overall_recomputed:${slot}`, row);
+        }
+
+        normalizedRows.push({
+            slot,
+            accuracy,
+            completeness,
+            actionability,
+            clarity,
+            overall,
+            reason: String(row?.reason || ''),
+            evidence: Array.isArray(row?.evidence) ? row.evidence.slice(0, 3).map((item) => String(item)) : []
+        });
+        seenSlots.add(slot);
+    });
 
     if (normalizedRows.length === 0) {
         return { ok: false, error: 'No valid score rows' };
     }
 
-    return { ok: true, scores: normalizedRows };
+    const missingSlots = expectedSlots.filter((slot) => !seenSlots.has(slot));
+    const coverage = expectedSlots.length > 0 ? expectedSlots.length - missingSlots.length : normalizedRows.length;
+    if (expectedSlots.length > 0) {
+        normalizedRows.sort((a, b) => expectedSlots.indexOf(a.slot) - expectedSlots.indexOf(b.slot));
+    }
+
+    if (strictExpectedCoverage && missingSlots.length > 0) {
+        return { ok: false, error: `Missing expected slots: ${missingSlots.join(', ')}` };
+    }
+
+    return {
+        ok: true,
+        scores: normalizedRows,
+        coverage,
+        missingSlots
+    };
 }
 
-async function normalizeWithDeepSeek(rawText, blindMapSlots) {
+function extractRawScoreRowsLenient(text, options = {}) {
+    const source = String(text || '');
+    if (!source.trim()) return [];
+
+    const weights = sanitizeWeights(options.weights || DEFAULT_SETTINGS.weights);
+    const logContext = options.logContext || null;
+
+    const candidates = extractEvalJsonCandidates(source);
+    let baseText = source;
+    if (candidates.length > 0) {
+        const selected = parseEvaluationCandidates(candidates, { weights, logContext });
+        if (selected.ok) {
+            return selected.scores;
+        }
+        baseText = candidates[candidates.length - 1] || source;
+    }
+
+    const parsed = parseEvaluationResponse(baseText, {
+        weights,
+        logContext
+    });
+    if (parsed.ok) {
+        return parsed.scores;
+    }
+
+    const slotMatches = [...baseText.matchAll(/["'`]?slot["'`]?\s*[:\uFF1A]\s*["'`]?([A-Za-z][A-Za-z0-9]*)["'`]?/gim)];
+    if (slotMatches.length === 0) {
+        logReviewTrace('lenient_extract_empty', logContext || {}, { reason: 'slot_not_found' });
+        return [];
+    }
+
+    const rows = [];
+    const seenSlots = new Set();
+
+    for (let index = 0; index < slotMatches.length; index += 1) {
+        const slot = normalizeSlot(slotMatches[index]?.[1]);
+        if (!slot || seenSlots.has(slot)) continue;
+
+        const start = Number(slotMatches[index].index || 0);
+        const end = index + 1 < slotMatches.length
+            ? Number(slotMatches[index + 1].index || baseText.length)
+            : baseText.length;
+        const segment = baseText.slice(start, end);
+
+        const row = buildLenientRowFromSegment(slot, segment, weights);
+        if (!row) {
+            logRejectedScoreRow(logContext, index, `lenient_row_invalid:${slot}`, {
+                slot,
+                segment: segment.slice(0, 180)
+            });
+            continue;
+        }
+
+        rows.push(row);
+        seenSlots.add(slot);
+    }
+
+    if (rows.length === 0) {
+        logReviewTrace('lenient_extract_empty', logContext || {}, { reason: 'no_valid_rows' });
+    } else {
+        logReviewTrace('lenient_extract_ok', logContext || {}, { rowCount: rows.length });
+    }
+
+    return rows;
+}
+
+function buildLenientRowFromSegment(slot, segment, weights) {
+    const accuracy = extractLenientScore(segment, 'accuracy');
+    const completeness = extractLenientScore(segment, 'completeness');
+    const actionability = extractLenientScore(segment, 'actionability');
+    const clarity = extractLenientScore(segment, 'clarity');
+    const overall = extractLenientScore(segment, 'overall');
+    const reason = extractLenientReason(segment);
+    const evidence = extractLenientEvidence(segment);
+
+    const hasAnyScore = [accuracy, completeness, actionability, clarity, overall].some((value) => value !== null);
+    if (!hasAnyScore && !reason && evidence.length === 0) {
+        return null;
+    }
+
+    const next = {
+        slot,
+        accuracy,
+        completeness,
+        actionability,
+        clarity,
+        overall,
+        reason,
+        evidence
+    };
+
+    if (
+        next.overall === null
+        && next.accuracy !== null
+        && next.completeness !== null
+        && next.actionability !== null
+        && next.clarity !== null
+    ) {
+        next.overall = computeWeightedOverall(next, weights);
+    }
+
+    return next;
+}
+
+function extractLenientScore(segment, key) {
+    const raw = extractLenientFieldValue(segment, key);
+    if (raw === null) return null;
+    return coerceScore10(raw);
+}
+
+function extractLenientReason(segment) {
+    const reason = extractLenientFieldValue(segment, 'reason');
+    if (reason === null) return '';
+    return String(reason).replace(/\s+/g, ' ').trim();
+}
+
+function extractLenientEvidence(segment) {
+    const evidenceArrayMatch = segment.match(/["'`]?evidence["'`]?\s*[:\uFF1A]\s*\[([\s\S]*?)\]/i);
+    if (evidenceArrayMatch) {
+        const body = String(evidenceArrayMatch[1] || '');
+        const quoted = [...body.matchAll(/"([^"]*)"|'([^']*)'/g)]
+            .map((item) => String(item[1] || item[2] || '').trim())
+            .filter(Boolean);
+        if (quoted.length > 0) {
+            return quoted.slice(0, 3);
+        }
+        return body
+            .split(/[,\n\r]/)
+            .map((item) => normalizeLenientValueToken(item))
+            .filter(Boolean)
+            .slice(0, 3);
+    }
+
+    const scalar = extractLenientFieldValue(segment, 'evidence');
+    if (scalar === null) return [];
+    const text = String(scalar).trim();
+    return text ? [text] : [];
+}
+
+function extractLenientFieldValue(segment, key) {
+    const escapedKey = escapeRegExp(key);
+    const match = segment.match(new RegExp(
+        `["'\`]?${escapedKey}["'\`]?\\s*[:\\uFF1A]\\s*("([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'|[^,\\n\\r}\\]]+)`,
+        'i'
+    ));
+    if (!match) return null;
+    return normalizeLenientValueToken(match[1] || '');
+}
+
+function normalizeLenientValueToken(token) {
+    let value = String(token || '').trim();
+    if (!value) return '';
+    if (
+        (value.startsWith('"') && value.endsWith('"'))
+        || (value.startsWith('\'') && value.endsWith('\''))
+        || (value.startsWith('`') && value.endsWith('`'))
+    ) {
+        value = value.slice(1, -1);
+    }
+    return value.trim();
+}
+
+function mergeStructuralScores(rawRows, deepseekRows, expectedSlots, options = {}) {
+    const weights = sanitizeWeights(options.weights || DEFAULT_SETTINGS.weights);
+    const logContext = options.logContext || null;
+    const slots = [...new Set((expectedSlots || []).map((slot) => normalizeSlot(slot)).filter(Boolean))];
+    if (slots.length === 0) {
+        return { ok: false, error: 'merge_missing_expected_slots' };
+    }
+
+    const rawBySlot = new Map();
+    for (const row of Array.isArray(rawRows) ? rawRows : []) {
+        const slot = normalizeSlot(row?.slot);
+        if (!slot || rawBySlot.has(slot)) continue;
+        rawBySlot.set(slot, row);
+    }
+
+    const deepseekBySlot = new Map();
+    for (const row of Array.isArray(deepseekRows) ? deepseekRows : []) {
+        const slot = normalizeSlot(row?.slot);
+        if (!slot || deepseekBySlot.has(slot)) continue;
+        deepseekBySlot.set(slot, row);
+    }
+
+    const merged = [];
+    for (const slot of slots) {
+        const deepseekRow = deepseekBySlot.get(slot);
+        if (!deepseekRow) {
+            logReviewTrace('deepseek_merge_missing_slot', logContext || {}, { slot });
+            return { ok: false, error: `merge_missing_slot:${slot}` };
+        }
+
+        const rawRow = rawBySlot.get(slot) || {};
+        const accuracy = coerceScore10(rawRow.accuracy) ?? coerceScore10(deepseekRow.accuracy);
+        const completeness = coerceScore10(rawRow.completeness) ?? coerceScore10(deepseekRow.completeness);
+        const actionability = coerceScore10(rawRow.actionability) ?? coerceScore10(deepseekRow.actionability);
+        const clarity = coerceScore10(rawRow.clarity) ?? coerceScore10(deepseekRow.clarity);
+        if (accuracy === null || completeness === null || actionability === null || clarity === null) {
+            return { ok: false, error: `merge_invalid_metrics:${slot}` };
+        }
+
+        const overall = (
+            coerceScore10(rawRow.overall)
+            ?? coerceScore10(deepseekRow.overall)
+            ?? computeWeightedOverall({ accuracy, completeness, actionability, clarity }, weights)
+        );
+        const reason = String(rawRow.reason || '').trim();
+        const evidence = Array.isArray(rawRow.evidence)
+            ? rawRow.evidence.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 3)
+            : [];
+
+        merged.push({
+            slot,
+            accuracy,
+            completeness,
+            actionability,
+            clarity,
+            overall,
+            reason,
+            evidence
+        });
+    }
+
+    return { ok: true, scores: merged };
+}
+
+function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function coerceScore10(value) {
+    if (typeof value === 'undefined' || value === null) {
+        return null;
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return normalizeNumericScore(value);
+    }
+
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    const fraction = raw.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
+    if (fraction) {
+        const numerator = Number(fraction[1]);
+        const denominator = Number(fraction[2]);
+        if (Number.isFinite(numerator) && Number.isFinite(denominator) && denominator !== 0) {
+            return normalizeNumericScore((numerator / denominator) * 10);
+        }
+    }
+
+    const percent = raw.match(/^(-?\d+(?:\.\d+)?)\s*%$/);
+    if (percent) {
+        return normalizeNumericScore(Number(percent[1]) / 10);
+    }
+
+    const chineseScore = raw.match(/^(-?\d+(?:\.\d+)?)\s*\u5206?$/);
+    if (chineseScore) {
+        return normalizeNumericScore(Number(chineseScore[1]));
+    }
+
+    const outOfTen = raw.match(/^(-?\d+(?:\.\d+)?)\s*(?:out\s*of)\s*10$/i);
+    if (outOfTen) {
+        return normalizeNumericScore(Number(outOfTen[1]));
+    }
+
+    const numeric = Number(raw.replaceAll(',', ''));
+    if (Number.isFinite(numeric)) {
+        return normalizeNumericScore(numeric);
+    }
+
+    return null;
+}
+
+function normalizeNumericScore(value) {
+    if (!Number.isFinite(value)) return null;
+    let normalized = Number(value);
+    if (normalized > 0 && normalized <= 1) {
+        normalized *= 10;
+    }
+    if (normalized < 1 || normalized > 10) {
+        return null;
+    }
+    return roundTo(normalized, 4);
+}
+
+function hasProvidedValue(value) {
+    if (typeof value === 'undefined' || value === null) return false;
+    return String(value).trim() !== '';
+}
+
+function computeWeightedOverall(row, weights) {
+    return roundTo(
+        row.accuracy * weights.accuracy
+        + row.completeness * weights.completeness
+        + row.actionability * weights.actionability
+        + row.clarity * weights.clarity,
+        4
+    );
+}
+
+function logRejectedScoreRow(logContext, index, reason, row) {
+    const preview = String(JSON.stringify(row || {})).slice(0, 220);
+    logReviewTrace('parse_row_rejected', logContext || {}, {
+        rowIndex: index,
+        reason,
+        rowPreview: preview
+    });
+}
+
+function buildNormalizeFailureMessage(localParseError, deepseekError, mergeError) {
+    const local = String(localParseError || 'local_parse_failed').trim();
+    const remote = String(deepseekError || 'deepseek_not_run').trim();
+    const merge = String(mergeError || 'merge_not_run').trim();
+    return `${local} | ${remote} | ${merge}`;
+}
+
+async function normalizeWithDeepSeek(rawText, blindMapSlots, options = {}) {
     const slots = [...new Set(
         (Array.isArray(blindMapSlots) ? blindMapSlots : Object.keys(blindMapSlots || {}))
             .map((slot) => normalizeSlot(slot))
@@ -1161,12 +1910,14 @@ async function normalizeWithDeepSeek(rawText, blindMapSlots) {
 
     const truncatedRaw = String(rawText || '').slice(0, 20000);
     const systemPrompt = [
-        'You are a strict JSON normalizer for AI evaluation outputs.',
-        'Return JSON only with this schema: {"scores":[{"slot":"A","accuracy":1,"completeness":1,"actionability":1,"clarity":1,"overall":1,"reason":"","evidence":[]}]}',
-        'Do not output markdown or explanations.',
+        'You are a strict structural normalizer for AI evaluation outputs.',
+        'Return JSON only.',
+        'Output schema: {"scores":[{"slot":"A","accuracy":8,"completeness":8,"actionability":8,"clarity":8,"overall":8}]}',
+        'Do not output markdown, comments, or explanations.',
         'Only use slots from the provided slot list.',
-        'Each numeric field must be in range 1-10.',
-        'If any required field is missing, fill it with the minimum valid value.'
+        'All slots must be present exactly once.',
+        'All numeric fields must be numbers in range 1-10.',
+        'Do not rewrite or summarize any reason/evidence text. If unavailable, omit reason/evidence.'
     ].join('\n');
 
     const userPrompt = [
@@ -1228,50 +1979,41 @@ async function normalizeWithDeepSeek(rawText, blindMapSlots) {
         return { ok: false, error: 'DeepSeek response missing choices[0].message.content' };
     }
 
-    return parseDeepSeekNormalization(content, slots);
+    return parseDeepSeekNormalization(content, slots, options);
 }
 
-function parseDeepSeekNormalization(text, slots) {
+function parseDeepSeekNormalization(text, slots, options = {}) {
     const allowedSlots = [...new Set((slots || []).map((slot) => normalizeSlot(slot)).filter(Boolean))];
     if (allowedSlots.length === 0) {
         return { ok: false, error: 'No allowed slots provided' };
     }
 
-    const base = parseEvaluationResponse(text);
+    const base = parseEvaluationResponse(text, {
+        expectedSlots: allowedSlots,
+        logContext: options.logContext || null
+    });
     if (!base.ok) {
         return { ok: false, error: base.error || 'Invalid DeepSeek normalization payload' };
     }
 
-    const allowedSet = new Set(allowedSlots);
-    const bySlot = {};
-    for (const row of base.scores || []) {
-        const slot = normalizeSlot(row.slot);
-        if (!slot || !allowedSet.has(slot) || bySlot[slot]) continue;
-        bySlot[slot] = {
-            slot,
-            accuracy: clamp(Number(row.accuracy), 1, 10),
-            completeness: clamp(Number(row.completeness), 1, 10),
-            actionability: clamp(Number(row.actionability), 1, 10),
-            clarity: clamp(Number(row.clarity), 1, 10),
-            overall: isFiniteNumber(row.overall) ? clamp(Number(row.overall), 1, 10) : 1,
-            reason: String(row.reason || ''),
-            evidence: Array.isArray(row.evidence) ? row.evidence.slice(0, 3).map((x) => String(x)) : []
-        };
-    }
-
+    const rowBySlot = new Map((base.scores || []).map((row) => [normalizeSlot(row.slot), row]));
     const normalizedScores = allowedSlots.map((slot) => {
-        if (bySlot[slot]) return bySlot[slot];
+        const row = rowBySlot.get(slot);
+        if (!row) return null;
         return {
             slot,
-            accuracy: 1,
-            completeness: 1,
-            actionability: 1,
-            clarity: 1,
-            overall: 1,
+            accuracy: row.accuracy,
+            completeness: row.completeness,
+            actionability: row.actionability,
+            clarity: row.clarity,
+            overall: row.overall,
             reason: '',
             evidence: []
         };
-    });
+    }).filter(Boolean);
+    if (normalizedScores.length !== allowedSlots.length) {
+        return { ok: false, error: 'DeepSeek normalized payload missing required slots' };
+    }
 
     return { ok: true, scores: normalizedScores };
 }
@@ -1303,7 +2045,26 @@ function emitRoundEvent(roundId, event, data) {
 
 function findPendingReviewTask(message) {
     if (message.requestId) {
-        return pendingReviewTasks.get(message.requestId) || null;
+        const exact = pendingReviewTasks.get(message.requestId);
+        if (exact) return exact;
+
+        if (!message.model) return null;
+        const sameModel = [...pendingReviewTasks.values()].filter((task) => task.judgeModel === message.model);
+        if (sameModel.length === 1) {
+            logReviewTrace('requestId_miss_fallback_hit', sameModel[0], {
+                requestId: message.requestId,
+                model: message.model
+            });
+            return sameModel[0];
+        }
+        if (sameModel.length > 1) {
+            logReviewTrace('requestId_miss_fallback_ambiguous', sameModel[0], {
+                requestId: message.requestId,
+                model: message.model,
+                pendingCount: sameModel.length
+            });
+        }
+        return null;
     }
 
     if (!message.model) return null;
@@ -1323,6 +2084,7 @@ function findPendingReviewTask(message) {
 function clearPendingReviewTask(requestId, keepTimer = false) {
     const task = pendingReviewTasks.get(requestId);
     if (!task) return;
+    clearIdleFinalizeTimer(task);
     if (!keepTimer && task.timeoutId) {
         clearTimeout(task.timeoutId);
     }
@@ -1428,3 +2190,4 @@ function roundTo(value, digits) {
 function isFiniteNumber(value) {
     return Number.isFinite(Number(value));
 }
+
