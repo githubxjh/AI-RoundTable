@@ -404,6 +404,29 @@ async function handleRoundAddCandidate(message) {
         };
     }
 
+    const normalizedAnswerText = normalizeCandidateAnswerText(modelState.lastSummary);
+    const rounds = { ...(workingState[RT_KEYS.rounds] || {}) };
+    const candidates = { ...(workingState[RT_KEYS.candidates] || {}) };
+
+    const existingCandidate = (round.candidateIds || [])
+        .map((candidateId) => candidates[candidateId])
+        .find((candidate) => (
+            candidate
+            && candidate.model === model
+            && normalizeCandidateAnswerText(candidate.answerText) === normalizedAnswerText
+        ));
+
+    if (existingCandidate) {
+        return {
+            status: 'candidate_added',
+            roundId,
+            candidateId: existingCandidate.candidateId,
+            candidate: existingCandidate,
+            roundCreated,
+            duplicate: true
+        };
+    }
+
     const candidateId = createId('candidate');
     const candidate = {
         candidateId,
@@ -415,8 +438,6 @@ async function handleRoundAddCandidate(message) {
         capturedAt: Date.now()
     };
 
-    const rounds = { ...(workingState[RT_KEYS.rounds] || {}) };
-    const candidates = { ...(workingState[RT_KEYS.candidates] || {}) };
     const nextRound = {
         ...round,
         candidateIds: [...new Set([...(round.candidateIds || []), candidateId])],
@@ -432,7 +453,11 @@ async function handleRoundAddCandidate(message) {
     });
 
     emitRoundEvent(roundId, 'candidate_added', { candidate, candidateCount: nextRound.candidateIds.length });
-    return { status: 'candidate_added', roundId, candidateId, candidate, roundCreated };
+    return { status: 'candidate_added', roundId, candidateId, candidate, roundCreated, duplicate: false };
+}
+
+function normalizeCandidateAnswerText(text) {
+    return String(text || '').replaceAll('\r\n', '\n').trim();
 }
 
 async function handleRoundStartReview(message) {

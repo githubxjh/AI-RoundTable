@@ -164,15 +164,13 @@ async function loadLatestRound() {
         const listResp = await sendMessage({ type: 'ROUND_LIST', limit: 1 });
         const rounds = Array.isArray(listResp?.rounds) ? listResp.rounds : [];
         if (rounds.length === 0) {
-            state.activeRoundId = null;
-            state.activeRound = null;
+            await setActiveRound(null);
             return;
         }
         await setActiveRound(rounds[0].roundId);
     } catch (error) {
         console.error('Failed to load latest round:', error);
-        state.activeRoundId = null;
-        state.activeRound = null;
+        await setActiveRound(null);
     }
 }
 
@@ -323,6 +321,10 @@ async function onAddCandidate(model) {
         if (response?.status !== 'candidate_added') {
             alert(getCandidateAddErrorMessage(response));
             return;
+        }
+
+        if (response?.duplicate) {
+            alert('已存在相同候选，未重复添加。');
         }
 
         await setActiveRound(response.roundId || resolved.roundId || state.activeRoundId);
