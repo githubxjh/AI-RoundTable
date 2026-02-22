@@ -8,6 +8,13 @@ class AdapterBase {
         this.currentRequestId = null;
         this.currentMode = 'normal';
         
+        // Rate limiting state
+        this._rate = { mode: 'throttle', interval: 300, leading: true, trailing: true };
+        this._lastSentAt = 0;
+        this._lastPayload = null;
+        this._pendingPayload = null;
+        this._sendTimer = null;
+
         this.init();
     }
 
@@ -164,8 +171,19 @@ class AdapterBase {
         // Should detect if generating, extract text, and call this.sendUpdate()
     }
 
+    /**
+     * Configure rate limiting options for sendUpdate
+     * @param {Object} options
+     * @param {'throttle'|'debounce'|'none'} [options.mode='throttle']
+     * @param {number} [options.interval=300] - Interval in ms
+     * @param {boolean} [options.leading=true] - Send on leading edge (throttle only)
+     * @param {boolean} [options.trailing=true] - Send on trailing edge
+     */
+    configureUpdateRate(options = {}) {
+        this._rate = { ...this._rate, ...options };
+    }
+
     sendUpdate(status, summary, extra = {}) {
-        // Debounce or throttle could be added here
         const requestId = Object.prototype.hasOwnProperty.call(extra, 'requestId')
             ? extra.requestId
             : this.currentRequestId;
@@ -173,14 +191,97 @@ class AdapterBase {
             ? extra.mode
             : this.currentMode;
 
-        chrome.runtime.sendMessage({
+        const payload = {
             type: 'STATUS_UPDATE',
             model: this.modelName,
             status: status, // 'idle' | 'generating'
             summary: summary,
             requestId: requestId || undefined,
             mode: mode || 'normal'
-        }).catch(e => {}); // Ignore errors if popup is closed
+        };
+
+        // Guarantee final state delivery immediately
+        if (status === 'idle') {
+            this._actuallySend(payload);
+            this._clearRateTimer();
+            return;
+        }
+
+        // Lightweight deduplication
+        if (this._isSamePayload(this._lastPayload, payload)) {
+            // Even if same, we schedule it for trailing to ensure the timestamp/keep-alive 
+            // is handled if needed, or just to debounce high frequency same-updates.
+            this._scheduleTrailing(payload);
+            return;
+        }
+
+        if (this._rate.mode === 'none') {
+            this._actuallySend(payload);
+            return;
+        }
+
+        const now = Date.now();
+        const elapsed = now - this._lastSentAt;
+        const wait = Math.max(this._rate.interval - elapsed, 0);
+
+        if (this._rate.mode === 'debounce') {
+            this._pendingPayload = payload;
+            clearTimeout(this._sendTimer);
+            this._sendTimer = setTimeout(() => this._flushPending(), this._rate.interval);
+            return;
+        }
+
+        // throttle (leading + trailing)
+        if (elapsed >= this._rate.interval) {
+            if (this._rate.leading) {
+                this._actuallySend(payload);
+            } else {
+                this._scheduleTrailing(payload, wait);
+            }
+        } else {
+            this._scheduleTrailing(payload, wait);
+        }
+    }
+
+    _isSamePayload(a, b) {
+        if (!a || !b) return false;
+        return a.status === b.status && 
+               a.summary === b.summary && 
+               a.mode === b.mode && 
+               a.requestId === b.requestId && 
+               a.model === b.model;
+    }
+
+    _scheduleTrailing(payload, wait = this._rate.interval) {
+        this._pendingPayload = payload;
+        if (!this._sendTimer && this._rate.trailing) {
+            this._sendTimer = setTimeout(() => this._flushPending(), wait);
+        }
+    }
+
+    _flushPending() {
+        if (this._pendingPayload) {
+            // Deduplication check at flush time: 
+            // if what we are about to send is exactly what we last sent, drop it.
+            if (this._isSamePayload(this._pendingPayload, this._lastPayload)) {
+                this._pendingPayload = null;
+            } else {
+                this._actuallySend(this._pendingPayload);
+                this._pendingPayload = null;
+            }
+        }
+        this._clearRateTimer();
+    }
+
+    _clearRateTimer() {
+        clearTimeout(this._sendTimer);
+        this._sendTimer = null;
+    }
+
+    _actuallySend(payload) {
+        this._lastSentAt = Date.now();
+        this._lastPayload = payload;
+        chrome.runtime.sendMessage(payload).catch(e => {});
     }
 
     // Methods to be overridden
