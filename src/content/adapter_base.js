@@ -5,6 +5,8 @@ class AdapterBase {
         this.observer = null;
         this.lastResponseLength = 0;
         this.isGenerating = false;
+        this.currentRequestId = null;
+        this.currentMode = 'normal';
         
         this.init();
     }
@@ -17,6 +19,8 @@ class AdapterBase {
             console.log(`[${this.modelName}] Received message:`, message);
             
             if (message.type === 'INPUT_PROMPT') {
+                this.currentRequestId = message.requestId || null;
+                this.currentMode = message.mode || 'normal';
                 this.handleInput(message.text)
                     .then(() => sendResponse({ status: 'input_simulated' }))
                     .catch(err => {
@@ -160,13 +164,22 @@ class AdapterBase {
         // Should detect if generating, extract text, and call this.sendUpdate()
     }
 
-    sendUpdate(status, summary) {
+    sendUpdate(status, summary, extra = {}) {
         // Debounce or throttle could be added here
+        const requestId = Object.prototype.hasOwnProperty.call(extra, 'requestId')
+            ? extra.requestId
+            : this.currentRequestId;
+        const mode = Object.prototype.hasOwnProperty.call(extra, 'mode')
+            ? extra.mode
+            : this.currentMode;
+
         chrome.runtime.sendMessage({
             type: 'STATUS_UPDATE',
             model: this.modelName,
             status: status, // 'idle' | 'generating'
-            summary: summary
+            summary: summary,
+            requestId: requestId || undefined,
+            mode: mode || 'normal'
         }).catch(e => {}); // Ignore errors if popup is closed
     }
 
