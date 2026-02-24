@@ -466,7 +466,11 @@ async function onStartReview() {
         });
 
         if (response?.status !== 'review_started') {
-            alert(response?.message || '开始评审失败');
+            if (response?.code === 'candidate_answer_missing') {
+                alert('当前回合候选回答为空，请重新加入候选后再评审。');
+            } else {
+                alert(response?.message || '开始评审失败');
+            }
         }
         await setActiveRound(state.activeRoundId);
     } catch (error) {

@@ -476,6 +476,21 @@ function normalizeCandidateAnswerText(text) {
     return String(text || '').replaceAll('\r\n', '\n').trim();
 }
 
+function extractCandidateAnswerText(candidate) {
+    if (!candidate || typeof candidate !== 'object') return '';
+
+    const primary = normalizeCandidateAnswerText(candidate.answerText);
+    if (primary) return primary;
+
+    const fallbacks = ['answer', 'summary', 'text'];
+    for (const key of fallbacks) {
+        const value = normalizeCandidateAnswerText(candidate[key]);
+        if (value) return value;
+    }
+
+    return '';
+}
+
 async function handleRoundStartReview(message) {
     const state = await ensureRtState();
     const rounds = { ...(state[RT_KEYS.rounds] || {}) };
@@ -500,6 +515,29 @@ async function handleRoundStartReview(message) {
         .filter((model) => MODEL_NAMES.includes(model));
     if (judgeModels.length === 0) {
         return { status: 'error', message: 'At least 1 judge model is required' };
+    }
+
+    const candidateAnswerById = {};
+    const baseAnswerStats = [];
+    let hasAnyUsableAnswer = false;
+    for (const candidate of candidateList) {
+        const text = extractCandidateAnswerText(candidate);
+        const chars = text.length;
+        if (chars > 0) hasAnyUsableAnswer = true;
+        candidateAnswerById[candidate.candidateId] = text;
+        baseAnswerStats.push({
+            candidateId: candidate.candidateId,
+            model: candidate.model || 'Unknown',
+            chars
+        });
+    }
+
+    if (!hasAnyUsableAnswer) {
+        return {
+            status: 'error',
+            code: 'candidate_answer_missing',
+            message: 'No usable candidate answers found for this round'
+        };
     }
 
     for (const evaluationId of round.evaluationIds || []) {
@@ -535,21 +573,42 @@ async function handleRoundStartReview(message) {
         const slots = buildSlots(shuffledCandidates.length);
         const blindMap = {};
         const answerLines = [];
+        const slotAnswerStats = [];
 
         slots.forEach((slot, idx) => {
             const candidateId = shuffledCandidates[idx];
             blindMap[slot] = candidateId;
             const candidate = candidates[candidateId];
+            const answerText = candidateAnswerById[candidateId] || '';
+            const hasAnswer = Boolean(answerText);
+            const safeAnswerText = hasAnswer ? answerText : '[Missing captured answer]';
+
+            slotAnswerStats.push({
+                slot,
+                candidateId,
+                model: candidate?.model || 'Unknown',
+                chars: safeAnswerText.length,
+                missing: !hasAnswer
+            });
+
             answerLines.push(`[Answer ${slot}]`);
-            answerLines.push(candidate?.answerText || '');
+            answerLines.push(safeAnswerText);
             answerLines.push('');
         });
 
         const answersBlock = answerLines.join('\n').trim();
-        const promptText = renderPrompt(promptTemplate, {
+        const renderedPrompt = renderPrompt(promptTemplate, {
             question: nextRound.question || '',
             answers: answersBlock
         });
+        const promptText = String(renderedPrompt.promptText || '').trim();
+        if (!promptText || !/\[Answer\s+[A-Za-z0-9]+\]/.test(promptText)) {
+            return {
+                status: 'error',
+                code: 'candidate_answer_missing',
+                message: 'Failed to inject candidate answers into review prompt'
+            };
+        }
 
         const evaluationId = createId('evaluation');
         const requestId = createId('request');
@@ -579,6 +638,20 @@ async function handleRoundStartReview(message) {
             createdAt: Date.now(),
             completedAt: null
         };
+
+        logReviewTrace('prompt_compiled', {
+            roundId: nextRound.roundId,
+            evaluationId,
+            requestId,
+            judgeModel
+        }, {
+            hasQuestionToken: Boolean(renderedPrompt.meta?.hasQuestionToken),
+            hasAnswersToken: Boolean(renderedPrompt.meta?.hasAnswersToken),
+            answersBlockChars: answersBlock.length,
+            promptChars: promptText.length,
+            candidateAnswerStats: slotAnswerStats,
+            baseAnswerStats
+        });
 
         evaluations[evaluationId] = evaluation;
         nextRound.evaluationIds.push(evaluationId);
@@ -2108,10 +2181,56 @@ function parseDeepSeekNormalization(text, slots, options = {}) {
     return { ok: true, scores: normalizedScores };
 }
 
+function normalizePromptTemplateTokens(template) {
+    const source = String(template || '');
+    const questionPattern = /{{\s*question\s*}}|{question}/i;
+    const answersPattern = /{{\s*answers\s*}}|{answers}/i;
+
+    const hasQuestionToken = questionPattern.test(source);
+    const hasAnswersToken = answersPattern.test(source);
+
+    const normalizedTemplate = source
+        .replace(/{{\s*question\s*}}|{question}/gi, '{{question}}')
+        .replace(/{{\s*answers\s*}}|{answers}/gi, '{{answers}}');
+
+    return {
+        normalizedTemplate,
+        hasQuestionToken,
+        hasAnswersToken
+    };
+}
+
 function renderPrompt(template, vars) {
-    return String(template || '')
-        .replaceAll('{{question}}', vars.question || '')
-        .replaceAll('{{answers}}', vars.answers || '');
+    const question = String(vars?.question || '').trim();
+    const answers = String(vars?.answers || '').trim();
+    const normalized = normalizePromptTemplateTokens(template);
+
+    let promptText = String(normalized.normalizedTemplate || '')
+        .replaceAll('{{question}}', question)
+        .replaceAll('{{answers}}', answers)
+        .trim();
+
+    if (!normalized.hasQuestionToken) {
+        const questionBlock = `Question:\n${question}`.trim();
+        promptText = promptText ? `${questionBlock}\n\n${promptText}` : questionBlock;
+    }
+
+    if (!normalized.hasAnswersToken) {
+        const answersBlock = `Answers:\n${answers}`.trim();
+        promptText = promptText ? `${promptText}\n\n${answersBlock}` : answersBlock;
+    }
+
+    if (!promptText) {
+        promptText = `Question:\n${question}\n\nAnswers:\n${answers}`.trim();
+    }
+
+    return {
+        promptText,
+        meta: {
+            hasQuestionToken: normalized.hasQuestionToken,
+            hasAnswersToken: normalized.hasAnswersToken
+        }
+    };
 }
 
 function hydrateRound(round, state) {
