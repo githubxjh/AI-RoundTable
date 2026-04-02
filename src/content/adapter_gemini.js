@@ -13,7 +13,7 @@ class GeminiAdapter extends AdapterBase {
         const requestId = this.currentRequestId || null;
         if (!this.acquireSendLock(requestId)) {
             console.warn(`GeminiAdapter: duplicate send blocked for requestId=${requestId}`);
-            return;
+            return { skipConfirm: true };
         }
 
         const inputSelector = this.getInputSelector();
@@ -23,7 +23,7 @@ class GeminiAdapter extends AdapterBase {
         this.simulateUserInput(inputEl, text);
         await this.delay(800);
 
-        const sendBtn = this.findSendButton();
+        const sendBtn = await this.waitForAvailableSendButton(2800);
         let sent = false;
         if (sendBtn) {
             this.simulateClick(sendBtn);
@@ -39,7 +39,11 @@ class GeminiAdapter extends AdapterBase {
             throw new Error('GeminiAdapter: failed to trigger send');
         }
 
-        this.onSendPostProcessing();
+        return {
+            inputEl,
+            text,
+            sendButtonBefore: sendBtn
+        };
     }
 
     acquireSendLock(requestId) {
@@ -72,9 +76,65 @@ class GeminiAdapter extends AdapterBase {
             'button[aria-label="Send message"]',
             'button[aria-label="Send"]',
             'button[aria-label*="\u53d1\u9001"]',
+            'button[title*="\u53d1\u9001"]',
             'button.send-button',
             'mat-icon[data-mat-icon-name="send"]'
         ].join(', ');
+    }
+
+    getAttachmentInputSelector() {
+        return [
+            'input[type="file"][accept*=".pdf"]',
+            'input[type="file"][accept*="image"]',
+            'input[type="file"][accept*="pdf"]',
+            'input[type="file"]'
+        ].join(', ');
+    }
+
+    async openAttachmentUIIfNeeded() {
+        const selector = this.getAttachmentInputSelector();
+        const existing = selector ? document.querySelector(selector) : null;
+        if (existing) return;
+
+        const candidates = Array.from(document.querySelectorAll([
+            'button[aria-label*="Upload"]',
+            'button[aria-label*="upload"]',
+            'button[aria-label*="\u4e0a\u4f20"]',
+            'button[aria-label*="\u9644\u4ef6"]',
+            'button[aria-label*="Attach"]',
+            '.upload-icon',
+            '.uploader-button-container button',
+            'button mat-icon[data-mat-icon-name="add"]',
+            'button mat-icon[data-mat-icon-name="attach_file"]'
+        ].join(', ')));
+
+        for (const node of candidates) {
+            const target = this.resolveClickableTarget(node);
+            if (!this.isSendTargetAvailable(target)) continue;
+            this.simulateClick(target);
+            await this.delay(220);
+            const fileInput = selector ? document.querySelector(selector) : null;
+            if (fileInput) return;
+        }
+    }
+
+    getAttachmentBusySelectors() {
+        return [
+            '.uploader-file-preview-container [role="progressbar"]',
+            '.uploader-file-preview-container [aria-busy="true"]',
+            '.uploader-file-preview-container .loading',
+            '.attachment-preview-wrapper [aria-busy="true"]',
+            '.attachment-preview-wrapper .loading'
+        ];
+    }
+
+    getAttachmentReadySelectors() {
+        return [
+            '.attachment-preview-wrapper',
+            '.uploader-file-preview-container .file-preview',
+            '.uploader-file-preview-container [data-testid*="file"]',
+            '.uploader-file-preview-container [class*="preview"]'
+        ];
     }
 
     getMessageSelectors() {
@@ -94,7 +154,13 @@ class GeminiAdapter extends AdapterBase {
 
     findSendButton() {
         const selector = this.getSendBtnSelector();
-        const candidates = Array.from(document.querySelectorAll(selector));
+        let candidates = [];
+        try {
+            candidates = Array.from(document.querySelectorAll(selector));
+        } catch (error) {
+            console.warn('GeminiAdapter: invalid send selector', error);
+            return null;
+        }
         for (const node of candidates) {
             const target = this.resolveClickableTarget(node);
             if (target && this.isSendTargetAvailable(target)) {

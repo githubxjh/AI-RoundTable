@@ -14,6 +14,14 @@ class ClaudeAdapter extends AdapterBase {
         return 'button[aria-label*="Send"], button[aria-label*="send"], div[contenteditable="true"] ~ div button';
     }
 
+    getAttachmentInputSelector() {
+        return [
+            'input[type="file"][accept*="image"]',
+            'input[type="file"][accept*="pdf"]',
+            'input[type="file"]'
+        ].join(', ');
+    }
+
     onSendPostProcessing() {
         this.lastResponseLength = 0;
         this.isGenerating = true;

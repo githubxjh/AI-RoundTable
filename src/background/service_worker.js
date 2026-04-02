@@ -38,11 +38,49 @@ const DEEPSEEK_TIMEOUT_MS = 25000;
 const IDLE_STABILIZE_MS = 1500;
 const IDLE_MIN_CHARS = 80;
 const IDLE_MAX_WAIT_MS = 12000;
+const BROADCAST_MAX_ATTACHMENTS = 3;
+const BROADCAST_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const BROADCAST_ALLOWED_MIME = new Set([
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif',
+    'application/pdf',
+    'text/plain',
+    'text/markdown',
+    'text/csv'
+]);
+const BROADCAST_ALLOWED_EXT = new Set([
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.webp',
+    '.gif',
+    '.pdf',
+    '.txt',
+    '.md',
+    '.csv'
+]);
+const BROADCAST_EXT_TO_MIME = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.csv': 'text/csv'
+};
 
 const DEFAULT_SETTINGS = {
     retentionDays: 30,
     selfReviewWeight: 0.2,
     nonSelfWeight: 1.0,
+    semanticFallbackEnabled: true,
+    semanticFallbackWeight: 0.3,
+    semanticFallbackMinConfidence: 0.65,
+    templateScoreReminderOnly: true,
     weights: {
         accuracy: 0.4,
         completeness: 0.25,
@@ -82,7 +120,24 @@ const DEFAULT_SETTINGS = {
         '  ]',
         '}',
         'Do not output markdown or any text outside <EVAL_JSON> tags.'
-    ].join('\n')
+    ].join('\n'),
+    discussionPromptTemplate: [
+        'You are participating in an AI roundtable discussion.',
+        'Question:',
+        '{{question}}',
+        '',
+        'Here are candidate responses from different AIs:',
+        '{{answers}}',
+        '',
+        'Please provide:',
+        '1) your best consolidated answer,',
+        '2) what is still unclear or contested,',
+        '3) up to 3 follow-up questions that could move the discussion forward.',
+        '',
+        'No scoring is required. No JSON is required. Reply in natural language.'
+    ].join('\n'),
+    reviewMode: 'scoring',
+    labelMode: 'blind'
 };
 
 const pendingReviewTasks = new Map();
@@ -123,7 +178,7 @@ async function handleMessage(message, sender) {
     switch (message.type) {
         case 'BROADCAST':
             await discoverTabs();
-            return broadcastMessage(message.text, message.targets);
+            return broadcastMessage(message.text, message.targets, message.attachments);
         case 'ROUTE':
             await discoverTabs();
             return routeMessage(message);
@@ -187,18 +242,212 @@ async function discoverTabs() {
     });
 }
 
-async function broadcastMessage(text, targets) {
+async function broadcastMessage(text, targets, attachments = []) {
     const targetModels = Array.isArray(targets) && targets.length > 0 ? targets : MODEL_NAMES;
-    const promises = [];
-
-    for (const [model, tabId] of Object.entries(activeTabs)) {
-        if (tabId && targetModels.includes(model)) {
-            promises.push(sendMessageToTab(tabId, { type: 'INPUT_PROMPT', text, model, mode: 'normal' }));
-        }
+    const normalizedAttachmentsResult = normalizeBroadcastAttachments(attachments);
+    if (!normalizedAttachmentsResult.ok) {
+        return {
+            status: 'error',
+            code: 'invalid_attachments',
+            message: normalizedAttachmentsResult.message
+        };
     }
 
-    const results = await Promise.allSettled(promises);
-    return { status: 'broadcast_done', results };
+    const normalizedAttachments = normalizedAttachmentsResult.attachments;
+    const hasAttachments = normalizedAttachments.length > 0;
+    const sentModels = [];
+    const degraded = [];
+    const skipped = [];
+    const failed = [];
+    const results = [];
+
+    for (const [model, tabId] of Object.entries(activeTabs)) {
+        if (!tabId || !targetModels.includes(model)) continue;
+
+        const response = await sendMessageToTab(tabId, {
+            type: 'INPUT_PROMPT',
+            text,
+            model,
+            mode: 'normal',
+            attachments: normalizedAttachments
+        });
+
+        results.push({ model, phase: 'attachments', response });
+
+        if (response?.status === 'input_simulated') {
+            sentModels.push(model);
+            continue;
+        }
+
+        if (hasAttachments && response?.status === 'skipped_unsupported_attachment') {
+            const skipCode = String(response?.code || 'attachment_upload_failed');
+            const skipReason = String(response?.message || 'Attachment upload is unsupported on this model page');
+            const fallbackResponse = await sendMessageToTab(tabId, {
+                type: 'INPUT_PROMPT',
+                text,
+                model,
+                mode: 'normal',
+                attachments: []
+            });
+
+            results.push({ model, phase: 'text_fallback', response: fallbackResponse });
+
+            if (fallbackResponse?.status === 'input_simulated') {
+                sentModels.push(model);
+                degraded.push({
+                    model,
+                    code: skipCode,
+                    reason: skipReason
+                });
+                continue;
+            }
+
+            const fallbackFailure = normalizeBroadcastFailure(
+                fallbackResponse,
+                'send_failed',
+                'Text fallback dispatch failed after attachment downgrade'
+            );
+            failed.push({
+                model,
+                code: fallbackFailure.code,
+                reason: fallbackFailure.reason
+            });
+            continue;
+        }
+
+        if (response?.status === 'skipped_unsupported_attachment') {
+            skipped.push({
+                model,
+                code: String(response?.code || 'attachment_upload_failed'),
+                reason: String(response?.message || 'Attachment upload is unsupported on this model page')
+            });
+            continue;
+        }
+
+        const failure = normalizeBroadcastFailure(
+            response,
+            hasAttachments ? 'attachment_upload_failed' : 'unexpected_model_response',
+            hasAttachments ? 'Attachment handling failed' : 'Unexpected model response'
+        );
+        failed.push({
+            model,
+            code: failure.code,
+            reason: failure.reason
+        });
+    }
+
+    if (hasAttachments && sentModels.length === 0) {
+        return {
+            status: 'error',
+            code: 'broadcast_no_supported_targets',
+            message: 'No selected model could accept the provided attachments',
+            sentModels,
+            degraded,
+            skipped,
+            failed,
+            results
+        };
+    }
+
+    return {
+        status: 'broadcast_done',
+        sentModels,
+        degraded,
+        skipped,
+        failed,
+        results
+    };
+}
+
+function normalizeBroadcastFailure(response, fallbackCode, fallbackReason) {
+    if (response?.error) {
+        return {
+            code: 'send_failed',
+            reason: String(response.error)
+        };
+    }
+
+    if (response?.status === 'error') {
+        return {
+            code: String(response?.code || fallbackCode),
+            reason: String(response?.message || fallbackReason)
+        };
+    }
+
+    if (response?.status && response.status !== 'input_simulated') {
+        return {
+            code: String(response?.code || fallbackCode),
+            reason: String(response?.message || `Unexpected response status: ${response.status}`)
+        };
+    }
+
+    return {
+        code: String(fallbackCode || 'unexpected_model_response'),
+        reason: String(fallbackReason || 'Unexpected model response')
+    };
+}
+
+function normalizeBroadcastAttachments(attachments) {
+    if (!Array.isArray(attachments) || attachments.length === 0) {
+        return { ok: true, attachments: [] };
+    }
+
+    if (attachments.length > BROADCAST_MAX_ATTACHMENTS) {
+        return {
+            ok: false,
+            message: `Too many attachments: max ${BROADCAST_MAX_ATTACHMENTS}`
+        };
+    }
+
+    const normalized = [];
+    for (const item of attachments) {
+        const name = String(item?.name || '').trim();
+        const mimeType = String(item?.mimeType || '').trim().toLowerCase();
+        const size = Number(item?.size || 0);
+        const base64 = String(item?.base64 || '').trim();
+        const extension = getFileExtension(name);
+        const normalizedMimeType = mimeType || BROADCAST_EXT_TO_MIME[extension] || '';
+
+        if (!name) {
+            return { ok: false, message: 'Attachment name is required' };
+        }
+        if (!Number.isFinite(size) || size <= 0) {
+            return { ok: false, message: `Invalid attachment size: ${name}` };
+        }
+        if (size > BROADCAST_MAX_ATTACHMENT_BYTES) {
+            return {
+                ok: false,
+                message: `Attachment too large: ${name} (max ${BROADCAST_MAX_ATTACHMENT_BYTES} bytes)`
+            };
+        }
+        if (!base64) {
+            return { ok: false, message: `Attachment payload is empty: ${name}` };
+        }
+
+        const allowed = BROADCAST_ALLOWED_MIME.has(normalizedMimeType) || BROADCAST_ALLOWED_EXT.has(extension);
+        if (!allowed) {
+            return {
+                ok: false,
+                message: `Unsupported attachment type: ${name}`
+            };
+        }
+
+        normalized.push({
+            name,
+            mimeType: normalizedMimeType || 'application/octet-stream',
+            size,
+            base64
+        });
+    }
+
+    return { ok: true, attachments: normalized };
+}
+
+function getFileExtension(name) {
+    const value = String(name || '').toLowerCase();
+    const dotIndex = value.lastIndexOf('.');
+    if (dotIndex < 0) return '';
+    return value.slice(dotIndex);
 }
 
 async function routeMessage(message) {
@@ -330,10 +579,15 @@ async function handleRoundCreate(message) {
             retentionDays: settings.retentionDays,
             selfReviewWeight: settings.selfReviewWeight,
             nonSelfWeight: settings.nonSelfWeight,
+            semanticFallbackEnabled: settings.semanticFallbackEnabled,
+            semanticFallbackWeight: settings.semanticFallbackWeight,
+            semanticFallbackMinConfidence: settings.semanticFallbackMinConfidence,
             weights: { ...settings.weights },
             scoringScale: settings.scoringScale,
             blindReview: settings.blindReview,
-            isolationMode: settings.isolationMode
+            isolationMode: settings.isolationMode,
+            reviewMode: normalizeReviewMode(settings.reviewMode),
+            labelMode: normalizeLabelMode(settings.labelMode)
         },
         createdAt: now,
         updatedAt: now
@@ -507,8 +761,17 @@ async function handleRoundStartReview(message) {
         .map((id) => candidates[id])
         .filter(Boolean);
 
-    if (candidateList.length < 2) {
-        return { status: 'error', message: 'At least 2 candidates are required' };
+    const reviewMode = normalizeReviewMode(message.mode || round.config?.reviewMode || settings.reviewMode);
+    const labelMode = normalizeLabelMode(message.labelMode || round.config?.labelMode || settings.labelMode);
+    const minCandidates = reviewMode === 'discussion' ? 1 : 2;
+
+    if (candidateList.length < minCandidates) {
+        return {
+            status: 'error',
+            message: reviewMode === 'discussion'
+                ? 'At least 1 candidate is required for discussion mode'
+                : 'At least 2 candidates are required'
+        };
     }
 
     const judgeModels = [...new Set(Array.isArray(message.judgeModels) ? message.judgeModels : [])]
@@ -545,9 +808,13 @@ async function handleRoundStartReview(message) {
         cleanupPendingTaskByEvaluationId(evaluationId);
     }
 
+    const defaultPromptTemplate = reviewMode === 'discussion'
+        ? String(settings.discussionPromptTemplate || DEFAULT_SETTINGS.discussionPromptTemplate || '')
+        : String(settings.reviewPromptTemplate || DEFAULT_SETTINGS.reviewPromptTemplate || '');
+
     const weights = sanitizeWeights(message.weights || settings.weights);
     const selfReviewWeight = isFiniteNumber(message.selfReviewWeight) ? Number(message.selfReviewWeight) : settings.selfReviewWeight;
-    const promptTemplate = String(message.promptTemplate || settings.reviewPromptTemplate || DEFAULT_SETTINGS.reviewPromptTemplate);
+    const promptTemplate = String(message.promptTemplate || defaultPromptTemplate);
 
     const nextRound = {
         ...round,
@@ -560,38 +827,48 @@ async function handleRoundStartReview(message) {
             retentionDays: settings.retentionDays,
             selfReviewWeight,
             nonSelfWeight: settings.nonSelfWeight,
+            semanticFallbackEnabled: settings.semanticFallbackEnabled,
+            semanticFallbackWeight: settings.semanticFallbackWeight,
+            semanticFallbackMinConfidence: settings.semanticFallbackMinConfidence,
             weights,
             scoringScale: settings.scoringScale,
-            blindReview: true,
-            isolationMode: 'reuse_current_chat'
+            blindReview: labelMode === 'blind',
+            isolationMode: 'reuse_current_chat',
+            reviewMode,
+            labelMode
         }
     };
 
     const dispatchQueue = [];
     for (const judgeModel of judgeModels) {
-        const shuffledCandidates = fisherYatesShuffle(candidateList.map((c) => c.candidateId));
-        const slots = buildSlots(shuffledCandidates.length);
+        const candidateOrder = labelMode === 'blind'
+            ? fisherYatesShuffle(candidateList.map((c) => c.candidateId))
+            : candidateList.map((c) => c.candidateId);
+        const labels = labelMode === 'blind'
+            ? buildSlots(candidateOrder.length)
+            : buildNamedLabels(candidateOrder, candidates);
         const blindMap = {};
         const answerLines = [];
         const slotAnswerStats = [];
 
-        slots.forEach((slot, idx) => {
-            const candidateId = shuffledCandidates[idx];
-            blindMap[slot] = candidateId;
+        labels.forEach((label, idx) => {
+            const candidateId = candidateOrder[idx];
+            const slotKey = normalizeSlot(label);
+            blindMap[slotKey] = candidateId;
             const candidate = candidates[candidateId];
             const answerText = candidateAnswerById[candidateId] || '';
             const hasAnswer = Boolean(answerText);
             const safeAnswerText = hasAnswer ? answerText : '[Missing captured answer]';
 
             slotAnswerStats.push({
-                slot,
+                slot: label,
                 candidateId,
                 model: candidate?.model || 'Unknown',
                 chars: safeAnswerText.length,
                 missing: !hasAnswer
             });
 
-            answerLines.push(`[Answer ${slot}]`);
+            answerLines.push(`[Answer ${label}]`);
             answerLines.push(safeAnswerText);
             answerLines.push('');
         });
@@ -602,7 +879,7 @@ async function handleRoundStartReview(message) {
             answers: answersBlock
         });
         const promptText = String(renderedPrompt.promptText || '').trim();
-        if (!promptText || !/\[Answer\s+[A-Za-z0-9]+\]/.test(promptText)) {
+        if (!promptText || !/\[Answer\s+[^\]\r\n]+\]/.test(promptText)) {
             return {
                 status: 'error',
                 code: 'candidate_answer_missing',
@@ -617,6 +894,8 @@ async function handleRoundStartReview(message) {
             roundId: nextRound.roundId,
             judgeModel,
             promptText,
+            mode: reviewMode,
+            labelMode,
             blindMap,
             rawResponse: '',
             parsedScores: [],
@@ -627,6 +906,9 @@ async function handleRoundStartReview(message) {
             normalizeLatencyMs: null,
             parseSource: null,
             rawSummaryChars: null,
+            semanticFallbackUsed: false,
+            semanticConfidence: null,
+            estimatedWeightFactor: 1,
             dispatchAt: null,
             firstIdleAt: null,
             firstGeneratingAt: null,
@@ -660,7 +942,8 @@ async function handleRoundStartReview(message) {
             requestId,
             roundId: nextRound.roundId,
             judgeModel,
-            promptText
+            promptText,
+            mode: reviewMode
         });
     }
 
@@ -712,7 +995,8 @@ async function handleRoundStartReview(message) {
             evaluationId: task.evaluationId,
             roundId: task.roundId,
             judgeModel: task.judgeModel,
-            dispatchAt
+            dispatchAt,
+            mode: task.mode
         });
         logReviewTrace('dispatch_done', task, { dispatchAt });
     }
@@ -945,6 +1229,7 @@ async function finalizeTaskIfReady(task, trigger = 'idle_stable') {
         let rawResponse = String(task.lastSummary || '').trim();
         const ageMs = getTaskAgeMs(task);
         const forceFinalize = trigger === 'timeout_fallback';
+        const taskMode = normalizeReviewMode(task.mode);
 
         if (!rawResponse) {
             const summaryResult = await resolveModelStateSummaryForTask(task);
@@ -988,7 +1273,12 @@ async function finalizeTaskIfReady(task, trigger = 'idle_stable') {
             return { ok: false, error: 'empty_summary_after_wait' };
         }
 
-        if (!forceFinalize && rawResponse.length < IDLE_MIN_CHARS && ageMs < IDLE_MAX_WAIT_MS) {
+        if (
+            taskMode !== 'discussion'
+            && !forceFinalize
+            && rawResponse.length < IDLE_MIN_CHARS
+            && ageMs < IDLE_MAX_WAIT_MS
+        ) {
             logReviewTrace('idle_wait_short_summary', task, { summaryChars: rawResponse.length, ageMs });
             logReviewTrace('idle_blocked_reason', task, {
                 reason: 'short_text',
@@ -1051,10 +1341,22 @@ async function finalizeEvaluationFromSummary(task, rawResponse, options = {}) {
     }
 
     const round = rounds[evaluation.roundId];
+    const evaluationMode = normalizeReviewMode(evaluation.mode || round?.config?.reviewMode || task.mode);
+    if (evaluationMode === 'discussion') {
+        return finalizeDiscussionFromSummary(task, evaluation, rawResponse, { trigger });
+    }
+
     const expectedSlots = Object.keys(evaluation.blindMap || {})
         .map((slot) => normalizeSlot(slot))
         .filter(Boolean);
     const weights = sanitizeWeights(round?.config?.weights || DEFAULT_SETTINGS.weights);
+    const semanticFallbackEnabled = (round?.config?.semanticFallbackEnabled ?? DEFAULT_SETTINGS.semanticFallbackEnabled) !== false;
+    const semanticFallbackWeight = normalizeSemanticFallbackWeight(
+        round?.config?.semanticFallbackWeight ?? DEFAULT_SETTINGS.semanticFallbackWeight
+    );
+    const semanticFallbackMinConfidence = normalizeSemanticFallbackMinConfidence(
+        round?.config?.semanticFallbackMinConfidence ?? DEFAULT_SETTINGS.semanticFallbackMinConfidence
+    );
 
     const parseResult = parseEvaluationResponse(rawResponse, {
         expectedSlots,
@@ -1073,6 +1375,9 @@ async function finalizeEvaluationFromSummary(task, rawResponse, options = {}) {
             normalizeLatencyMs: null,
             parseSource: parseResult.parseSource || null,
             rawSummaryChars: rawResponse.length,
+            semanticFallbackUsed: false,
+            semanticConfidence: null,
+            estimatedWeightFactor: 1,
             finalizeSource: 'local_strict',
             finalizedAt: completedAt,
             finalizeAttempts: task.finalizeAttempts,
@@ -1111,72 +1416,193 @@ async function finalizeEvaluationFromSummary(task, rawResponse, options = {}) {
     }
     const normalizeLatencyMs = Date.now() - normalizeStart;
 
+    let structuralFailure = '';
+    let merged = null;
     if (!normalizedResult.ok) {
-        const failure = buildNormalizeFailureMessage(parseResult.error, normalizedResult.error, null);
+        structuralFailure = buildNormalizeFailureMessage(parseResult.error, normalizedResult.error, null);
         emitRoundEvent(task.roundId, 'deepseek_normalize_failed', {
             evaluationId: task.evaluationId,
             judgeModel: task.judgeModel,
-            error: failure,
+            error: structuralFailure,
             normalizeLatencyMs
         });
         logReviewTrace('deepseek_normalize_failed', task, {
-            error: failure,
+            error: structuralFailure,
             normalizeLatencyMs
         });
-        return { ok: false, error: failure };
+    } else {
+        merged = mergeStructuralScores(rawExtract, normalizedResult.scores, expectedSlots, {
+            weights,
+            logContext: task
+        });
+        if (!merged.ok) {
+            structuralFailure = buildNormalizeFailureMessage(parseResult.error, 'deepseek_ok', merged.error);
+            emitRoundEvent(task.roundId, 'deepseek_normalize_failed', {
+                evaluationId: task.evaluationId,
+                judgeModel: task.judgeModel,
+                error: structuralFailure,
+                normalizeLatencyMs
+            });
+            logReviewTrace('deepseek_merge_failed', task, {
+                error: structuralFailure,
+                normalizeLatencyMs
+            });
+        }
     }
 
-    const merged = mergeStructuralScores(rawExtract, normalizedResult.scores, expectedSlots, {
-        weights,
-        logContext: task
-    });
-    if (!merged.ok) {
-        const failure = buildNormalizeFailureMessage(parseResult.error, 'deepseek_ok', merged.error);
-        emitRoundEvent(task.roundId, 'deepseek_normalize_failed', {
+    if (!structuralFailure && merged?.ok) {
+        const normalizedAt = Date.now();
+        await completeEvaluation(task.evaluationId, {
+            status: 'done',
+            rawResponse,
+            parsedScores: merged.scores,
+            rawParsedScores: rawExtract,
+            normalizedBy: DEEPSEEK_MODEL,
+            normalizeError: null,
+            normalizeLatencyMs,
+            parseSource: parseResult.parseSource || 'best_candidate',
+            rawSummaryChars: rawResponse.length,
+            semanticFallbackUsed: false,
+            semanticConfidence: null,
+            estimatedWeightFactor: 1,
+            normalizedAt,
+            finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural',
+            finalizedAt: normalizedAt,
+            finalizeAttempts: task.finalizeAttempts,
+            completedAt: normalizedAt
+        });
+
+        emitRoundEvent(task.roundId, 'deepseek_normalize_done', {
             evaluationId: task.evaluationId,
             judgeModel: task.judgeModel,
-            error: failure,
-            normalizeLatencyMs
+            normalizeLatencyMs,
+            scoreRows: merged.scores.length
         });
-        logReviewTrace('deepseek_merge_failed', task, {
-            error: failure,
-            normalizeLatencyMs
+        logReviewTrace('deepseek_normalize_done', task, {
+            normalizeLatencyMs,
+            scoreRows: merged.scores.length,
+            parseSource: parseResult.parseSource || null,
+            summaryChars: rawResponse.length,
+            finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural'
+        });
+        return { ok: true, finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural' };
+    }
+
+    if (!semanticFallbackEnabled) {
+        return { ok: false, error: structuralFailure || 'semantic_fallback_disabled' };
+    }
+
+    emitRoundEvent(task.roundId, 'semantic_fallback_started', {
+        evaluationId: task.evaluationId,
+        judgeModel: task.judgeModel,
+        minConfidence: semanticFallbackMinConfidence
+    });
+    logReviewTrace('semantic_fallback_started', task, {
+        minConfidence: semanticFallbackMinConfidence,
+        estimatedWeightFactor: semanticFallbackWeight
+    });
+
+    const semanticStart = Date.now();
+    let semanticResult;
+    try {
+        semanticResult = await inferSemanticScoresWithDeepSeek(rawResponse, evaluation.blindMap || {}, {
+            logContext: task,
+            minConfidence: semanticFallbackMinConfidence,
+            weights
+        });
+    } catch (error) {
+        semanticResult = { ok: false, error: error.message || String(error) };
+    }
+    const semanticLatencyMs = Date.now() - semanticStart;
+
+    if (!semanticResult.ok) {
+        const failure = `${structuralFailure || 'structural_parse_failed'} | semantic:${semanticResult.error || 'semantic_failed'}`;
+        emitRoundEvent(task.roundId, 'semantic_fallback_failed', {
+            evaluationId: task.evaluationId,
+            judgeModel: task.judgeModel,
+            error: semanticResult.error || 'semantic_failed',
+            semanticLatencyMs
+        });
+        logReviewTrace('semantic_fallback_failed', task, {
+            error: semanticResult.error || 'semantic_failed',
+            semanticLatencyMs
         });
         return { ok: false, error: failure };
     }
 
-    const normalizedAt = Date.now();
+    const semanticNormalizedAt = Date.now();
     await completeEvaluation(task.evaluationId, {
         status: 'done',
         rawResponse,
-        parsedScores: merged.scores,
+        parsedScores: semanticResult.scores,
         rawParsedScores: rawExtract,
         normalizedBy: DEEPSEEK_MODEL,
         normalizeError: null,
-        normalizeLatencyMs,
-        parseSource: parseResult.parseSource || 'best_candidate',
+        normalizeLatencyMs: normalizeLatencyMs + semanticLatencyMs,
+        parseSource: 'semantic_inferred',
         rawSummaryChars: rawResponse.length,
-        normalizedAt,
-        finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural',
-        finalizedAt: normalizedAt,
+        semanticFallbackUsed: true,
+        semanticConfidence: semanticResult.confidence,
+        estimatedWeightFactor: semanticFallbackWeight,
+        normalizedAt: semanticNormalizedAt,
+        finalizeSource: 'semantic_fallback',
+        finalizedAt: semanticNormalizedAt,
         finalizeAttempts: task.finalizeAttempts,
-        completedAt: normalizedAt
+        completedAt: semanticNormalizedAt
     });
 
-    emitRoundEvent(task.roundId, 'deepseek_normalize_done', {
+    emitRoundEvent(task.roundId, 'semantic_fallback_done', {
         evaluationId: task.evaluationId,
         judgeModel: task.judgeModel,
-        normalizeLatencyMs,
-        scoreRows: merged.scores.length
+        confidence: semanticResult.confidence,
+        estimatedWeightFactor: semanticFallbackWeight,
+        semanticLatencyMs,
+        scoreRows: semanticResult.scores.length
     });
-    logReviewTrace('deepseek_normalize_done', task, {
-        normalizeLatencyMs,
-        scoreRows: merged.scores.length,
-        parseSource: parseResult.parseSource || null,
-        summaryChars: rawResponse.length,
-        finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural'
+    logReviewTrace('semantic_fallback_done', task, {
+        confidence: semanticResult.confidence,
+        estimatedWeightFactor: semanticFallbackWeight,
+        semanticLatencyMs,
+        scoreRows: semanticResult.scores.length
     });
-    return { ok: true, finalizeSource: trigger === 'timeout_fallback' ? 'timeout_fallback' : 'deepseek_structural' };
+    return { ok: true, finalizeSource: 'semantic_fallback' };
+}
+
+async function finalizeDiscussionFromSummary(task, evaluation, rawResponse, options = {}) {
+    const trigger = String(options.trigger || 'idle_stable');
+    const normalizedText = String(rawResponse || '').trim();
+    if (!normalizedText) {
+        return { ok: false, error: 'discussion_empty_response' };
+    }
+
+    const completedAt = Date.now();
+    const finalizeSource = trigger === 'timeout_fallback' ? 'timeout_fallback' : 'discussion_raw';
+
+    await completeEvaluation(task.evaluationId, {
+        status: 'done',
+        rawResponse: normalizedText,
+        parsedScores: [],
+        rawParsedScores: [],
+        normalizedBy: null,
+        normalizeError: null,
+        normalizeLatencyMs: null,
+        parseSource: 'discussion_text',
+        rawSummaryChars: normalizedText.length,
+        semanticFallbackUsed: false,
+        semanticConfidence: null,
+        estimatedWeightFactor: 1,
+        finalizeSource,
+        finalizedAt: completedAt,
+        finalizeAttempts: task.finalizeAttempts,
+        completedAt
+    });
+
+    logReviewTrace('discussion_done', task, {
+        summaryChars: normalizedText.length,
+        finalizeSource,
+        trigger
+    });
+    return { ok: true, finalizeSource };
 }
 
 async function handleReviewTimeout(requestId) {
@@ -1280,6 +1706,9 @@ async function markEvaluationFailure(evaluationId, status, rawResponse, extraPat
         status,
         rawResponse: rawResponse || '',
         parsedScores: [],
+        semanticFallbackUsed: false,
+        semanticConfidence: null,
+        estimatedWeightFactor: 1,
         completedAt: Date.now()
     });
 }
@@ -1302,7 +1731,10 @@ async function recomputeRoundRanking(roundId) {
         .filter(Boolean);
 
     const doneEvaluations = evaluationList.filter((evaluation) => evaluation.status === 'done');
-    const ranking = computeRanking(round, candidateList, doneEvaluations);
+    const reviewMode = normalizeReviewMode(round?.config?.reviewMode);
+    const ranking = reviewMode === 'discussion'
+        ? []
+        : computeRanking(round, candidateList, doneEvaluations);
 
     const terminalCount = evaluationList.filter((evaluation) => TERMINAL_EVAL_STATUSES.has(evaluation.status)).length;
     const allDone = evaluationList.length > 0 && terminalCount === evaluationList.length;
@@ -1352,6 +1784,7 @@ function computeRanking(round, candidates, evaluations) {
     for (const evaluation of evaluations) {
         const scoreRows = Array.isArray(evaluation.parsedScores) ? evaluation.parsedScores : [];
         const rawRows = [];
+        const estimatedWeightFactor = getEvaluationEstimatedWeightFactor(evaluation);
 
         for (const row of scoreRows) {
             const slot = normalizeSlot(row.slot);
@@ -1395,7 +1828,8 @@ function computeRanking(round, candidates, evaluations) {
             const normalized = sigma < 0.5 ? item.raw : clamp(5 + 1.5 * ((item.raw - mu) / sigma), 1, 10);
             const candidate = candidates.find((c) => c.candidateId === item.candidateId);
             const isSelf = candidate ? candidate.model === item.judgeModel : false;
-            const weight = isSelf ? selfReviewWeight : nonSelfWeight;
+            const baseWeight = isSelf ? selfReviewWeight : nonSelfWeight;
+            const weight = baseWeight * estimatedWeightFactor;
 
             recordsByCandidateId[item.candidateId].push({
                 ...item,
@@ -1769,7 +2203,7 @@ function extractRawScoreRowsLenient(text, options = {}) {
         return parsed.scores;
     }
 
-    const slotMatches = [...baseText.matchAll(/["'`]?slot["'`]?\s*[:\uFF1A]\s*["'`]?([A-Za-z][A-Za-z0-9]*)["'`]?/gim)];
+    const slotMatches = extractLenientSlotMatches(baseText);
     if (slotMatches.length === 0) {
         logReviewTrace('lenient_extract_empty', logContext || {}, { reason: 'slot_not_found' });
         return [];
@@ -1779,7 +2213,7 @@ function extractRawScoreRowsLenient(text, options = {}) {
     const seenSlots = new Set();
 
     for (let index = 0; index < slotMatches.length; index += 1) {
-        const slot = normalizeSlot(slotMatches[index]?.[1]);
+        const slot = normalizeSlot(slotMatches[index]?.slot);
         if (!slot || seenSlots.has(slot)) continue;
 
         const start = Number(slotMatches[index].index || 0);
@@ -1808,6 +2242,28 @@ function extractRawScoreRowsLenient(text, options = {}) {
     }
 
     return rows;
+}
+
+function extractLenientSlotMatches(text) {
+    const source = String(text || '');
+    if (!source.trim()) return [];
+
+    const quoted = [...source.matchAll(/["'`]?slot["'`]?\s*[:\uFF1A]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`)/gim)]
+        .map((match) => ({
+            index: Number(match.index || 0),
+            slot: normalizeSlot(match[1] || match[2] || match[3] || '')
+        }))
+        .filter((item) => Boolean(item.slot));
+    if (quoted.length > 0) {
+        return quoted;
+    }
+
+    return [...source.matchAll(/["'`]?slot["'`]?\s*[:\uFF1A]\s*([^,\n\r}\]]+)/gim)]
+        .map((match) => ({
+            index: Number(match.index || 0),
+            slot: normalizeSlot(match[1] || '')
+        }))
+        .filter((item) => Boolean(item.slot));
 }
 
 function buildLenientRowFromSegment(slot, segment, weights) {
@@ -2030,6 +2486,45 @@ function normalizeNumericScore(value) {
     return roundTo(normalized, 4);
 }
 
+function normalizeConfidence01(value) {
+    if (typeof value === 'undefined' || value === null) {
+        return null;
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        if (value >= 0 && value <= 1) return roundTo(value, 4);
+        if (value > 1 && value <= 100) return roundTo(value / 100, 4);
+        return null;
+    }
+
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    const percent = raw.match(/^(-?\d+(?:\.\d+)?)\s*%$/);
+    if (percent) {
+        const numeric = Number(percent[1]);
+        if (!Number.isFinite(numeric)) return null;
+        return numeric >= 0 && numeric <= 100 ? roundTo(numeric / 100, 4) : null;
+    }
+
+    const fraction = raw.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
+    if (fraction) {
+        const numerator = Number(fraction[1]);
+        const denominator = Number(fraction[2]);
+        if (Number.isFinite(numerator) && Number.isFinite(denominator) && denominator !== 0) {
+            const numeric = numerator / denominator;
+            return numeric >= 0 && numeric <= 1 ? roundTo(numeric, 4) : null;
+        }
+        return null;
+    }
+
+    const numeric = Number(raw.replaceAll(',', ''));
+    if (!Number.isFinite(numeric)) return null;
+    if (numeric >= 0 && numeric <= 1) return roundTo(numeric, 4);
+    if (numeric > 1 && numeric <= 100) return roundTo(numeric / 100, 4);
+    return null;
+}
+
 function hasProvidedValue(value) {
     if (typeof value === 'undefined' || value === null) return false;
     return String(value).trim() !== '';
@@ -2181,6 +2676,189 @@ function parseDeepSeekNormalization(text, slots, options = {}) {
     return { ok: true, scores: normalizedScores };
 }
 
+async function inferSemanticScoresWithDeepSeek(rawText, blindMapSlots, options = {}) {
+    const slots = [...new Set(
+        (Array.isArray(blindMapSlots) ? blindMapSlots : Object.keys(blindMapSlots || {}))
+            .map((slot) => normalizeSlot(slot))
+            .filter(Boolean)
+    )];
+    if (slots.length === 0) {
+        return { ok: false, error: 'No blind-map slots available for semantic inference' };
+    }
+
+    const minConfidence = normalizeSemanticFallbackMinConfidence(options.minConfidence);
+    const truncatedRaw = String(rawText || '').slice(0, 20000);
+    const systemPrompt = [
+        'You infer missing quantitative scores from qualitative evaluation text.',
+        'Return JSON only.',
+        'Output schema: {"confidence":0.72,"scores":[{"slot":"A","accuracy":8,"completeness":8,"actionability":8,"clarity":8,"overall":8}]}',
+        'Only use slots from the provided slot list. Every slot must appear exactly once.',
+        'All score fields must be numbers in range 1-10.',
+        'confidence must be a number between 0 and 1 indicating reliability of inferred scores.',
+        'If evidence is weak, set lower confidence.',
+        'Do not output markdown, comments, or explanations.'
+    ].join('\n');
+
+    const userPrompt = [
+        `Allowed slots: ${slots.join(', ')}`,
+        `Minimum confidence required by caller: ${minConfidence.toFixed(2)}`,
+        'Infer plausible numeric scores from the following qualitative evaluation text.',
+        '',
+        'RAW_EVALUATION_TEXT_START',
+        truncatedRaw,
+        'RAW_EVALUATION_TEXT_END'
+    ].join('\n');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_TIMEOUT_MS);
+
+    let response;
+    try {
+        response = await fetch(DEEPSEEK_API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${DEEPSEEK_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: DEEPSEEK_MODEL,
+                temperature: 0,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ]
+            }),
+            signal: controller.signal
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            return { ok: false, error: `DeepSeek timeout after ${DEEPSEEK_TIMEOUT_MS}ms` };
+        }
+        return { ok: false, error: `DeepSeek request failed: ${error.message || String(error)}` };
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
+    if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        return {
+            ok: false,
+            error: `DeepSeek HTTP ${response.status}: ${String(body || '').slice(0, 240)}`
+        };
+    }
+
+    let data;
+    try {
+        data = await response.json();
+    } catch (error) {
+        return { ok: false, error: `DeepSeek JSON decode failed: ${error.message}` };
+    }
+
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content || typeof content !== 'string') {
+        return { ok: false, error: 'DeepSeek response missing choices[0].message.content' };
+    }
+
+    return parseDeepSeekSemanticInference(content, slots, {
+        logContext: options.logContext || null,
+        minConfidence,
+        weights: options.weights || DEFAULT_SETTINGS.weights
+    });
+}
+
+function parseDeepSeekSemanticInference(text, slots, options = {}) {
+    const allowedSlots = [...new Set((slots || []).map((slot) => normalizeSlot(slot)).filter(Boolean))];
+    if (allowedSlots.length === 0) {
+        return { ok: false, error: 'No allowed slots provided' };
+    }
+
+    const minConfidence = normalizeSemanticFallbackMinConfidence(options.minConfidence);
+    const parsed = parseSemanticInferencePayload(text, {
+        expectedSlots: allowedSlots,
+        weights: options.weights || DEFAULT_SETTINGS.weights,
+        logContext: options.logContext || null
+    });
+    if (!parsed.ok) {
+        return { ok: false, error: parsed.error || 'Invalid semantic inference payload' };
+    }
+    if (parsed.confidence < minConfidence) {
+        return {
+            ok: false,
+            error: `semantic_confidence_too_low:${parsed.confidence.toFixed(4)}<${minConfidence.toFixed(4)}`
+        };
+    }
+    return {
+        ok: true,
+        confidence: parsed.confidence,
+        scores: parsed.scores
+    };
+}
+
+function parseSemanticInferencePayload(text, options = {}) {
+    const source = String(text || '');
+    if (!source.trim()) {
+        return { ok: false, error: 'semantic_empty_payload' };
+    }
+
+    const candidates = extractEvalJsonCandidates(source);
+    if (candidates.length === 0) {
+        const firstBrace = source.indexOf('{');
+        const lastBrace = source.lastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+            candidates.push(source.slice(firstBrace, lastBrace + 1).trim());
+        }
+    }
+    if (candidates.length === 0) {
+        return { ok: false, error: 'semantic_missing_json_payload' };
+    }
+
+    let lastError = 'semantic_no_valid_candidate';
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+        const parsed = parseSemanticInferenceCandidate(candidates[index], options);
+        if (parsed.ok) {
+            return parsed;
+        }
+        lastError = parsed.error || lastError;
+    }
+
+    return { ok: false, error: lastError };
+}
+
+function parseSemanticInferenceCandidate(jsonText, options = {}) {
+    if (!jsonText || typeof jsonText !== 'string') {
+        return { ok: false, error: 'semantic_missing_candidate_json' };
+    }
+
+    let parsed;
+    try {
+        parsed = JSON.parse(jsonText);
+    } catch (error) {
+        return { ok: false, error: `semantic_json_parse_error:${error.message}` };
+    }
+
+    const confidence = normalizeConfidence01(parsed?.confidence);
+    if (confidence === null) {
+        return { ok: false, error: 'semantic_confidence_invalid' };
+    }
+
+    const scorePayload = JSON.stringify({ scores: parsed?.scores });
+    const scoreParse = parseEvaluationCandidatePayload(scorePayload, {
+        expectedSlots: options.expectedSlots || [],
+        weights: options.weights || DEFAULT_SETTINGS.weights,
+        logContext: options.logContext || null,
+        strictExpectedCoverage: true
+    });
+    if (!scoreParse.ok) {
+        return { ok: false, error: scoreParse.error || 'semantic_scores_invalid' };
+    }
+
+    return {
+        ok: true,
+        confidence,
+        scores: scoreParse.scores
+    };
+}
+
 function normalizePromptTemplateTokens(template) {
     const source = String(template || '');
     const questionPattern = /{{\s*question\s*}}|{question}/i;
@@ -2316,6 +2994,20 @@ function buildReviewProgress(evaluations) {
     return { total, done, failed, pending };
 }
 
+function getEvaluationEstimatedWeightFactor(evaluation) {
+    const raw = Number(evaluation?.estimatedWeightFactor);
+    if (!Number.isFinite(raw)) return 1;
+    return clamp(raw, 0, 1);
+}
+
+function normalizeReviewMode(value) {
+    return String(value || '').trim().toLowerCase() === 'discussion' ? 'discussion' : 'scoring';
+}
+
+function normalizeLabelMode(value) {
+    return String(value || '').trim().toLowerCase() === 'named' ? 'named' : 'blind';
+}
+
 function mergeSettings(partial) {
     return {
         ...DEFAULT_SETTINGS,
@@ -2340,6 +3032,22 @@ function sanitizeWeights(weights) {
     };
 }
 
+function normalizeSemanticFallbackWeight(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return DEFAULT_SETTINGS.semanticFallbackWeight;
+    }
+    return clamp(numeric, 0, 1);
+}
+
+function normalizeSemanticFallbackMinConfidence(value) {
+    const normalized = normalizeConfidence01(value);
+    if (normalized === null) {
+        return DEFAULT_SETTINGS.semanticFallbackMinConfidence;
+    }
+    return clamp(normalized, 0, 1);
+}
+
 function createId(prefix) {
     if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
         return `${prefix}_${globalThis.crypto.randomUUID()}`;
@@ -2354,6 +3062,17 @@ function buildSlots(count) {
         else slots.push(`A${i - 25}`);
     }
     return slots;
+}
+
+function buildNamedLabels(candidateIds, candidateMap = {}) {
+    const countsByModel = new Map();
+    return (Array.isArray(candidateIds) ? candidateIds : []).map((candidateId) => {
+        const candidate = candidateMap[candidateId] || {};
+        const model = String(candidate.model || 'Candidate').trim() || 'Candidate';
+        const nextCount = (countsByModel.get(model) || 0) + 1;
+        countsByModel.set(model, nextCount);
+        return `${model} #${nextCount}`;
+    });
 }
 
 function fisherYatesShuffle(list) {

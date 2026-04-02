@@ -13,6 +13,10 @@ export const DEFAULT_SETTINGS = {
     retentionDays: 30,
     selfReviewWeight: 0.2,
     nonSelfWeight: 1.0,
+    semanticFallbackEnabled: true,
+    semanticFallbackWeight: 0.3,
+    semanticFallbackMinConfidence: 0.65,
+    templateScoreReminderOnly: true,
     weights: {
         accuracy: 0.4,
         completeness: 0.25,
@@ -59,7 +63,24 @@ export const DEFAULT_SETTINGS = {
         '}',
         '',
         '不要输出 Markdown。不要在 <EVAL_JSON> 标签外输出任何额外文本。'
-    ].join('\n')
+    ].join('\n'),
+    discussionPromptTemplate: [
+        '你将作为圆桌审议成员参与讨论。',
+        '问题：',
+        '{{question}}',
+        '',
+        '以下是不同 AI 的候选回答：',
+        '{{answers}}',
+        '',
+        '请完成以下任务：',
+        '1) 给出你的综合回答（可直接改进候选观点）；',
+        '2) 指出你认为仍不清楚或存在分歧的点；',
+        '3) 提出最多 3 个推进讨论的新问题（可选）。',
+        '',
+        '注意：本模式不需要打分，不需要输出 JSON，可以直接输出自然语言。'
+    ].join('\n'),
+    reviewMode: 'scoring',
+    labelMode: 'blind'
 };
 
 function mergeSettings(partial = {}) {

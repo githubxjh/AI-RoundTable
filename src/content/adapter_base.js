@@ -7,6 +7,9 @@ class AdapterBase {
         this.isGenerating = false;
         this.currentRequestId = null;
         this.currentMode = 'normal';
+        this._sendConfirmTimeoutMs = 3500;
+        this._sendConfirmPollMs = 150;
+        this._attachmentReadyTimeoutMs = 12000;
         
         // Rate limiting state
         this._rate = { mode: 'throttle', interval: 300, leading: true, trailing: true };
@@ -28,11 +31,27 @@ class AdapterBase {
             if (message.type === 'INPUT_PROMPT') {
                 this.currentRequestId = message.requestId || null;
                 this.currentMode = message.mode || 'normal';
-                this.handleInput(message.text)
-                    .then(() => sendResponse({ status: 'input_simulated' }))
+                this.handlePrompt({
+                    text: message.text,
+                    attachments: message.attachments
+                })
+                    .then((result) => sendResponse(result || { status: 'input_simulated' }))
                     .catch(err => {
                         console.error('Input Error:', err);
-                        sendResponse({ status: 'error', message: err.toString() });
+                        const code = String(err?.code || '').trim();
+                        if (code.startsWith('attachment_')) {
+                            sendResponse({
+                                status: 'skipped_unsupported_attachment',
+                                code,
+                                message: err?.message || 'Attachment upload is unsupported'
+                            });
+                            return;
+                        }
+                        sendResponse({
+                            status: 'error',
+                            code: code || 'input_failed',
+                            message: err?.message || err?.toString?.() || 'Input failed'
+                        });
                     });
                 return true; // async response
             }
@@ -51,22 +70,360 @@ class AdapterBase {
 
         console.log("Setting input value...");
         this.simulateUserInput(inputEl, text);
-        
-        // Wait a bit then click send
-        setTimeout(async () => {
-            const sendBtnSelector = this.getSendBtnSelector();
-            const sendBtn = document.querySelector(sendBtnSelector);
-            if (sendBtn) {
-                console.log("Clicking send button...");
-                this.simulateClick(sendBtn);
-                this.onSendPostProcessing();
-            } else {
-                console.warn("Send button not found:", sendBtnSelector);
-                // Fallback: If send button is missing but we entered text, maybe try pressing Enter?
-                // This is risky if Enter makes new line, but for chat apps it usually sends.
-                // Let's rely on subclasses to implement specific Enter key logic if needed (like Gemini/Grok already do)
+        await this.delay(800);
+
+        const sendBtn = this.findSendButton();
+        let sent = false;
+        if (sendBtn) {
+            console.log('Clicking send button...');
+            this.simulateClick(sendBtn);
+            sent = true;
+        } else {
+            sent = this.sendByEnter(inputEl);
+            if (sent) {
+                console.warn('Send button unavailable, fallback to Enter once');
             }
-        }, 800);
+        }
+
+        if (!sent) {
+            throw new Error('Failed to trigger send');
+        }
+
+        return {
+            inputEl,
+            text,
+            sendButtonBefore: sendBtn
+        };
+    }
+
+    async handlePrompt(payload = {}) {
+        const text = String(payload?.text || '');
+        const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
+
+        if (attachments.length > 0) {
+            await this.attachFiles(attachments);
+        }
+
+        const dispatchState = await this.handleInput(text);
+        if (!dispatchState?.skipConfirm) {
+            await this.confirmSendTriggered(dispatchState || { inputEl: null, text });
+            this.onSendPostProcessing();
+        }
+        return { status: 'input_simulated' };
+    }
+
+    async attachFiles(attachments) {
+        try {
+            await this.openAttachmentUIIfNeeded();
+
+            const inputEl = await this.findAttachmentInput();
+            if (!inputEl) {
+                throw this.createAttachmentError(
+                    'attachment_input_not_found',
+                    'File input was not found on this model page'
+                );
+            }
+
+            const files = attachments.map((item) => this.decodeBase64ToFile(item));
+            if (files.length === 0) {
+                throw this.createAttachmentError('attachment_upload_failed', 'No valid attachments to upload');
+            }
+
+            await this.setInputFiles(inputEl, files);
+            await this.waitAttachmentReady(inputEl, files);
+        } catch (error) {
+            if (String(error?.code || '').startsWith('attachment_')) {
+                throw error;
+            }
+            throw this.createAttachmentError(
+                'attachment_upload_failed',
+                error?.message || 'Attachment upload failed'
+            );
+        }
+    }
+
+    createAttachmentError(code, message) {
+        const error = new Error(message);
+        error.code = code;
+        return error;
+    }
+
+    decodeBase64ToFile(attachment) {
+        const name = String(attachment?.name || 'attachment.bin');
+        const mimeType = String(attachment?.mimeType || 'application/octet-stream');
+        const base64 = String(attachment?.base64 || '').trim();
+
+        if (!base64) {
+            throw this.createAttachmentError('attachment_upload_failed', `Attachment payload is empty: ${name}`);
+        }
+
+        let binary;
+        try {
+            binary = atob(base64);
+        } catch (error) {
+            throw this.createAttachmentError('attachment_upload_failed', `Attachment payload decode failed: ${name}`);
+        }
+
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+
+        return new File([bytes], name, { type: mimeType || 'application/octet-stream' });
+    }
+
+    async openAttachmentUIIfNeeded() {
+        // Optional override in subclasses when a click is required before <input type="file"> appears.
+    }
+
+    getAttachmentInputSelector() {
+        return 'input[type="file"]';
+    }
+
+    async findAttachmentInput() {
+        const selector = this.getAttachmentInputSelector();
+        if (!selector) return null;
+        return this.waitForElement(selector, 4000);
+    }
+
+    async setInputFiles(inputEl, files) {
+        if (!inputEl) {
+            throw this.createAttachmentError('attachment_input_not_found', 'File input is missing');
+        }
+
+        if (!inputEl.multiple && files.length > 1) {
+            throw this.createAttachmentError(
+                'attachment_type_rejected',
+                'Model input does not allow multiple files'
+            );
+        }
+
+        const transfer = new DataTransfer();
+        files.forEach((file) => transfer.items.add(file));
+        inputEl.files = transfer.files;
+
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    async waitAttachmentReady(inputEl, files) {
+        const expected = inputEl?.multiple ? files.length : Math.min(files.length, 1);
+        const accepted = await this.waitForExpectedFiles(inputEl, expected, 3000);
+        if (!accepted) {
+            throw this.createAttachmentError(
+                'attachment_upload_failed',
+                `Attachment files not accepted by input (0/${expected})`
+            );
+        }
+
+        const busySelectors = this.getAttachmentBusySelectors();
+        const readySelectors = this.getAttachmentReadySelectors();
+
+        // If the model exposes no upload-state selectors, keep a short settle window.
+        if (busySelectors.length === 0 && readySelectors.length === 0) {
+            await this.delay(900);
+            return;
+        }
+
+        const deadline = Date.now() + this._attachmentReadyTimeoutMs;
+        while (Date.now() < deadline) {
+            const currentAccepted = Number(inputEl?.files?.length || 0);
+            if (currentAccepted < expected) {
+                throw this.createAttachmentError(
+                    'attachment_upload_failed',
+                    `Attachment files were rejected by model input (${currentAccepted}/${expected})`
+                );
+            }
+
+            const busy = this.hasAnySelector(busySelectors);
+            const ready = readySelectors.length === 0 ? true : this.hasAnySelector(readySelectors);
+            if (!busy && ready) {
+                return;
+            }
+
+            await this.delay(200);
+        }
+
+        throw this.createAttachmentError(
+            'attachment_upload_failed',
+            'Attachment upload did not become ready in time'
+        );
+    }
+
+    async waitForExpectedFiles(inputEl, expected, timeoutMs = 3000) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const actual = Number(inputEl?.files?.length || 0);
+            if (actual >= expected) return true;
+            await this.delay(120);
+        }
+        return Number(inputEl?.files?.length || 0) >= expected;
+    }
+
+    hasAnySelector(selectors = []) {
+        for (const selector of selectors) {
+            try {
+                const nodes = Array.from(document.querySelectorAll(selector));
+                if (nodes.length === 0) continue;
+                if (nodes.some((node) => this.isElementVisible(node))) {
+                    return true;
+                }
+            } catch (error) {
+                // Ignore invalid selectors from site drift and continue checking others.
+            }
+        }
+        return false;
+    }
+
+    isElementVisible(node) {
+        if (!node) return false;
+        const rects = node.getClientRects?.() || [];
+        if (rects.length > 0) return true;
+        const style = window.getComputedStyle?.(node);
+        if (!style) return false;
+        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    }
+
+    getAttachmentBusySelectors() {
+        return [];
+    }
+
+    getAttachmentReadySelectors() {
+        return [];
+    }
+
+    async confirmSendTriggered(state = {}) {
+        const inputEl = state?.inputEl || null;
+        const text = String(state?.text || '');
+        const sendButtonBefore = state?.sendButtonBefore || null;
+        const deadline = Date.now() + this._sendConfirmTimeoutMs;
+
+        while (Date.now() < deadline) {
+            if (this.isGeneratingIndicatorActiveSafe()) {
+                return true;
+            }
+
+            if (this.hasInputBeenSubmitted(inputEl, text)) {
+                return true;
+            }
+
+            if (this.wasSendButtonLocked(sendButtonBefore)) {
+                return true;
+            }
+
+            await this.delay(this._sendConfirmPollMs);
+        }
+
+        const err = new Error('Send was not confirmed within safe window');
+        err.code = 'send_not_confirmed';
+        throw err;
+    }
+
+    async waitForAvailableSendButton(timeoutMs = 3000) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const btn = this.findSendButton();
+            if (btn) return btn;
+            await this.delay(120);
+        }
+        return this.findSendButton();
+    }
+
+    isGeneratingIndicatorActiveSafe() {
+        try {
+            return Boolean(this.isGeneratingIndicatorActive());
+        } catch (error) {
+            return false;
+        }
+    }
+
+    hasInputBeenSubmitted(inputEl, expectedText) {
+        if (!inputEl) return false;
+
+        const expected = this.normalizeComparableText(expectedText);
+        if (!expected) return false;
+
+        const current = this.normalizeComparableText(this.readInputText(inputEl));
+        if (!current) return true;
+        if (current === expected) return false;
+        if (current.length <= Math.max(4, Math.floor(expected.length * 0.35))) return true;
+        if (!current.includes(expected) && !expected.includes(current)) return true;
+        return false;
+    }
+
+    wasSendButtonLocked(sendButtonBefore) {
+        if (!sendButtonBefore) return false;
+        if (!this.isSendButtonAvailable(sendButtonBefore)) return true;
+        const latest = this.findSendButton();
+        if (!latest) return true;
+        return false;
+    }
+
+    readInputText(inputEl) {
+        if (!inputEl) return '';
+        const isEditable = inputEl.contentEditable === 'true' || inputEl.getAttribute('contenteditable') === 'true';
+        if (isEditable) {
+            return String(inputEl.innerText || inputEl.textContent || '');
+        }
+        if (Object.prototype.hasOwnProperty.call(inputEl, 'value')) {
+            return String(inputEl.value || '');
+        }
+        return String(inputEl.innerText || inputEl.textContent || '');
+    }
+
+    normalizeComparableText(value) {
+        return String(value || '').replace(/\s+/g, ' ').trim();
+    }
+
+    delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    findSendButton() {
+        const selector = this.getSendBtnSelector();
+        if (!selector) return null;
+        const candidates = Array.from(document.querySelectorAll(selector));
+        for (const node of candidates) {
+            const target = this.resolveClickableTarget(node);
+            if (target && this.isSendButtonAvailable(target)) {
+                return target;
+            }
+        }
+        return null;
+    }
+
+    resolveClickableTarget(node) {
+        if (!node) return null;
+        if (node.matches?.('button, [role="button"]')) return node;
+        return node.closest?.('button, [role="button"]') || null;
+    }
+
+    isSendButtonAvailable(node) {
+        if (!node) return false;
+        if (node.disabled) return false;
+        if (String(node.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
+        return (node.getClientRects?.() || []).length > 0;
+    }
+
+    sendByEnter(inputEl) {
+        if (!inputEl) return false;
+        inputEl.focus();
+        const eventInit = {
+            key: 'Enter',
+            code: 'Enter',
+            which: 13,
+            keyCode: 13,
+            bubbles: true,
+            cancelable: true
+        };
+        inputEl.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+        inputEl.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+        inputEl.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+        return true;
+    }
+
+    isGeneratingIndicatorActive() {
+        return false;
     }
 
     simulateClick(element) {

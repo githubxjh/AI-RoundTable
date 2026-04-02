@@ -68,6 +68,14 @@ class GrokAdapter extends AdapterBase {
         ].join(', ');
     }
 
+    getAttachmentInputSelector() {
+        return [
+            'input[type="file"][name="files"]',
+            'form input[type="file"]',
+            'input[type="file"]'
+        ].join(', ');
+    }
+
     getAssistantSelectors() {
         return [
             'div[id^="response-"].items-start .message-bubble',

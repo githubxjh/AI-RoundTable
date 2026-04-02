@@ -15,7 +15,7 @@ class ChatGPTAdapter extends AdapterBase {
         this.simulateUserInput(inputEl, text);
         await this.delay(600);
 
-        const sendBtn = this.findSendButton();
+        const sendBtn = await this.waitForAvailableSendButton(3200);
         let sent = false;
         if (sendBtn) {
             this.simulateClick(sendBtn);
@@ -31,7 +31,11 @@ class ChatGPTAdapter extends AdapterBase {
             throw new Error('ChatGPTAdapter: failed to trigger send');
         }
 
-        this.onSendPostProcessing();
+        return {
+            inputEl,
+            text,
+            sendButtonBefore: sendBtn
+        };
     }
 
     getInputSelector() {
@@ -44,8 +48,39 @@ class ChatGPTAdapter extends AdapterBase {
             'button[data-testid="fruitjuice-send-button"]',
             'button[aria-label="Send prompt"]',
             'button[aria-label="Send message"]',
+            'button[aria-label*="\u53d1\u9001"]',
+            'button[title*="\u53d1\u9001"]',
             'button[aria-label*="Send"]'
         ].join(', ');
+    }
+
+    getAttachmentInputSelector() {
+        return [
+            'input#upload-photos[type="file"]',
+            'input[type="file"][accept*="image"]',
+            'input[type="file"][accept*=".pdf"]',
+            'input[type="file"][accept*="pdf"]',
+            'form input[type="file"]',
+            'input[type="file"]'
+        ].join(', ');
+    }
+
+    getAttachmentBusySelectors() {
+        return [
+            '[aria-label*="Uploading"]',
+            '[aria-label*="\u4e0a\u4f20"]',
+            '[data-testid*="upload"][aria-busy="true"]',
+            '[data-testid*="file-upload"][aria-busy="true"]',
+            '[role="progressbar"]'
+        ];
+    }
+
+    getAttachmentReadySelectors() {
+        return [
+            '.group\\/file-tile',
+            '[data-testid*="file-tile"]',
+            '[data-testid*="attachment"]'
+        ];
     }
 
     getAssistantMessageSelectors() {
@@ -64,7 +99,13 @@ class ChatGPTAdapter extends AdapterBase {
 
     findSendButton() {
         const selector = this.getSendBtnSelector();
-        const candidates = Array.from(document.querySelectorAll(selector));
+        let candidates = [];
+        try {
+            candidates = Array.from(document.querySelectorAll(selector));
+        } catch (error) {
+            console.warn('ChatGPTAdapter: invalid send selector', error);
+            return null;
+        }
         for (const node of candidates) {
             if (this.isSendButtonAvailable(node)) {
                 return node;

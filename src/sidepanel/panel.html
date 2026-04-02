@@ -65,9 +65,20 @@
             font-family: inherit;
             font-size: 12px;
             line-height: 1.45;
+        }        textarea:focus {
+            outline: none;
+            border-color: var(--primary);
         }
-
-        textarea:focus {
+        select {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 6px 8px;
+            font-family: inherit;
+            font-size: 12px;
+            color: var(--text);
+            background: #fff;
+        }
+        select:focus {
             outline: none;
             border-color: var(--primary);
         }
@@ -78,6 +89,75 @@
             gap: 10px;
             margin-top: 8px;
             margin-bottom: 8px;
+        }        .file-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+        .file-list {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #f9fafb;
+            padding: 6px 8px;
+            margin-bottom: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 96px;
+            overflow-y: auto;
+        }
+        .file-item {
+            font-size: 11px;
+            color: #374151;
+            line-height: 1.4;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-status {
+            margin-bottom: 8px;
+            border-radius: 8px;
+            border: 1px solid var(--line);
+            background: #f8fafc;
+            color: #475569;
+            font-size: 11px;
+            padding: 6px 8px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .file-status.info {
+            border-color: #bfdbfe;
+            background: #eff6ff;
+            color: #1e40af;
+        }
+
+        .file-status.success {
+            border-color: #86efac;
+            background: #ecfdf5;
+            color: #166534;
+        }
+
+        .file-status.warn {
+            border-color: #fcd34d;
+            background: #fffbeb;
+            color: #92400e;
+        }
+
+        .file-status.error {
+            border-color: #fca5a5;
+            background: #fef2f2;
+            color: #991b1b;
+        }
+
+        body.drag-active #top-deck {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25);
+            background: #f8fbff;
         }
 
         .checkbox-label {
@@ -265,7 +345,18 @@
             align-items: center;
             margin-top: 8px;
         }
-
+        .review-controls {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+            margin-bottom: 8px;
+        }
+        .review-control {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
         #review-progress {
             margin-top: 8px;
             font-size: 12px;
@@ -457,7 +548,22 @@
         <div class="section-title">
             <span>Global Command</span>
         </div>
-        <textarea id="global-input" placeholder="输入问题，广播给多个 AI"></textarea>
+        <textarea id="global-input" placeholder="Enter a question to broadcast to multiple AI models"></textarea>
+        <input
+            type="file"
+            id="broadcast-file-input"
+            multiple
+            accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,.md,.csv,.txt,.pdf"
+            style="display:none"
+        >
+        <div class="file-toolbar">
+            <button id="broadcast-attach-btn" class="btn btn-neutral btn-small">Add Files</button>
+            <button id="broadcast-clear-files-btn" class="btn btn-neutral btn-small">Clear Files</button>
+        </div>
+        <div id="broadcast-file-list" class="file-list">
+            <div class="empty">No files selected.</div>
+        </div>
+        <div id="broadcast-file-status" class="file-status info">可以粘贴或拖拽文件到面板（最多3个，每个不超过5MB）。</div>
         <div class="checkbox-row target-selector">
             <label class="checkbox-label"><input type="checkbox" value="ChatGPT" checked>ChatGPT</label>
             <label class="checkbox-label"><input type="checkbox" value="Claude" checked>Claude</label>
@@ -571,8 +677,25 @@
 
     <section id="review-panel" class="panel">
         <div class="section-title">
-            <span>Blind Review</span>
+            <span>Review</span>
             <button id="reset-template-btn" class="btn btn-neutral btn-small">恢复模板</button>
+        </div>
+
+        <div class="review-controls">
+            <label class="review-control" for="review-mode">
+                <span class="small-muted">模式</span>
+                <select id="review-mode">
+                    <option value="scoring">评分审议</option>
+                    <option value="discussion">讨论审议</option>
+                </select>
+            </label>
+            <label class="review-control" for="label-mode">
+                <span class="small-muted">标签</span>
+                <select id="label-mode">
+                    <option value="blind">匿名(A/B/C/D)</option>
+                    <option value="named">真实名称</option>
+                </select>
+            </label>
         </div>
 
         <div class="small-muted">评委模型</div>
@@ -584,19 +707,22 @@
             <label class="checkbox-label"><input type="checkbox" value="Doubao">Doubao</label>
         </div>
 
-        <textarea id="review-template" placeholder="评分模板（支持 {{question}} 和 {{answers}}）"></textarea>
+        <textarea id="review-template" placeholder="审议模板（支持 {{question}} 和 {{answers}}）"></textarea>
         <div class="inline-actions">
-            <button id="start-review-btn" class="btn btn-primary">开始评审</button>
+            <button id="start-review-btn" class="btn btn-primary">开始评分审议</button>
         </div>
-        <div id="review-progress">等待开始评审</div>
+        <div id="review-progress">等待开始审议</div>
         <div id="judge-status-list">
             <div class="empty">No judge tasks yet</div>
         </div>
         <div id="result-board">
-            <div class="empty">暂无排名结果</div>
+            <div class="empty">暂无结果</div>
         </div>
     </section>
 
     <script type="module" src="panel.js"></script>
 </body>
 </html>
+
+
+

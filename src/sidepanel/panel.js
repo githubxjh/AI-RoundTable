@@ -15,11 +15,56 @@ const FIXED_WEIGHTS = {
     clarity: 0.15
 };
 
+const REVIEW_MODES = {
+    scoring: 'scoring',
+    discussion: 'discussion'
+};
+
+const LABEL_MODES = {
+    blind: 'blind',
+    named: 'named'
+};
+
 const PRESETS = {
-    'red-teaming': '请作为严格评审者，指出上面方案最大的漏洞和风险。',
-    'fact-check': '请核实上面观点中的事实、数据和时效性，标出可疑点。',
-    'trade-off': '请分析该方案的收益、机会成本和潜在副作用。',
-    'execution': '请把这个思路整理成可执行的分步计划与时间节点。'
+    'red-teaming': 'Act as a strict reviewer and point out the largest risks and flaws in the proposal.',
+    'fact-check': 'Fact-check the statements above and identify any uncertain, outdated, or unsupported claims.',
+    'trade-off': 'Analyze trade-offs: benefits, opportunity cost, constraints, and side effects.',
+    'execution': 'Turn this idea into an executable plan with steps, owners, and timeline.'
+};
+
+const BROADCAST_MAX_FILES = 3;
+const BROADCAST_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const BROADCAST_ALLOWED_MIME = new Set([
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif',
+    'application/pdf',
+    'text/plain',
+    'text/markdown',
+    'text/csv'
+]);
+const BROADCAST_ALLOWED_EXT = new Set([
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.webp',
+    '.gif',
+    '.pdf',
+    '.txt',
+    '.md',
+    '.csv'
+]);
+const BROADCAST_EXT_TO_MIME = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.csv': 'text/csv'
 };
 
 const state = {
@@ -28,7 +73,16 @@ const state = {
     activeRound: null,
     settings: { ...DEFAULT_SETTINGS },
     latestReviewProgress: null,
-    selectedCandidateId: null
+    selectedCandidateId: null,
+    broadcastFiles: [],
+    broadcastStatus: {
+        level: 'info',
+        message: 'You can paste or drag files here (max 3 files, 5MB each).'
+    },
+    dragDepth: 0,
+    reviewMode: REVIEW_MODES.scoring,
+    labelMode: LABEL_MODES.blind,
+    isStartingReview: false
 };
 
 const refs = {};
@@ -38,6 +92,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     bindEvents();
     await initializeSettings();
     await loadLatestRound();
+    renderBroadcastFileList();
+    renderBroadcastStatus();
     renderQuoteList();
     updateRouteExclusions();
     renderRound();
@@ -48,11 +104,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function bindRefs() {
     refs.globalInput = document.getElementById('global-input');
+    refs.broadcastFileInput = document.getElementById('broadcast-file-input');
+    refs.broadcastAttachBtn = document.getElementById('broadcast-attach-btn');
+    refs.broadcastClearFilesBtn = document.getElementById('broadcast-clear-files-btn');
+    refs.broadcastFileList = document.getElementById('broadcast-file-list');
+    refs.broadcastFileStatus = document.getElementById('broadcast-file-status');
     refs.broadcastBtn = document.getElementById('broadcast-btn');
     refs.quoteList = document.getElementById('quote-list');
     refs.clearQuotesBtn = document.getElementById('clear-quotes');
     refs.routerInput = document.getElementById('router-input');
     refs.routeBtn = document.getElementById('route-btn');
+    refs.reviewMode = document.getElementById('review-mode');
+    refs.labelMode = document.getElementById('label-mode');
     refs.reviewTemplate = document.getElementById('review-template');
     refs.resetTemplateBtn = document.getElementById('reset-template-btn');
     refs.startReviewBtn = document.getElementById('start-review-btn');
@@ -69,14 +132,24 @@ function bindRefs() {
 
 function bindEvents() {
     refs.broadcastBtn.addEventListener('click', onBroadcast);
+    refs.broadcastAttachBtn?.addEventListener('click', onBroadcastAttachClick);
+    refs.broadcastClearFilesBtn?.addEventListener('click', onClearBroadcastFiles);
+    refs.broadcastFileInput?.addEventListener('change', onSelectBroadcastFiles);
+    document.body.addEventListener('paste', onPanelPaste);
+    document.body.addEventListener('dragenter', onPanelDragEnter);
+    document.body.addEventListener('dragover', onPanelDragOver);
+    document.body.addEventListener('dragleave', onPanelDragLeave);
+    document.body.addEventListener('drop', onPanelDrop);
     refs.clearQuotesBtn.addEventListener('click', onClearQuotes);
     refs.routeBtn.addEventListener('click', onRoute);
     refs.resetTemplateBtn.addEventListener('click', onResetTemplate);
     refs.startReviewBtn.addEventListener('click', onStartReview);
     refs.deleteRoundBtn.addEventListener('click', onDeleteRound);
+    refs.reviewMode?.addEventListener('change', () => onReviewModeChange().catch(console.error));
+    refs.labelMode?.addEventListener('change', () => onLabelModeChange().catch(console.error));
 
     refs.reviewTemplate.addEventListener('change', () => {
-        saveRtSettings({ reviewPromptTemplate: refs.reviewTemplate.value }).catch(console.error);
+        persistCurrentTemplate().catch(console.error);
     });
 
     document.addEventListener('click', (event) => {
@@ -150,8 +223,7 @@ async function initializeSettings() {
     const currentTemplate = String(state.settings.reviewPromptTemplate || '');
     // Backward compatibility + self-heal: migrate old template or reset if HTML fragment polluted this field.
     const shouldResetTemplate =
-        currentTemplate.includes('You are an impartial evaluator.')
-        || currentTemplate.includes('<button id="start-review-btn"')
+        currentTemplate.includes('<button id="start-review-btn"')
         || currentTemplate.includes('<div id="review-progress">')
         || currentTemplate.includes('<div id="result-board">')
         || currentTemplate.includes('?/button>')
@@ -163,7 +235,116 @@ async function initializeSettings() {
         saveRtSettings({ reviewPromptTemplate: DEFAULT_SETTINGS.reviewPromptTemplate }).catch(console.error);
     }
 
-    refs.reviewTemplate.value = state.settings.reviewPromptTemplate || DEFAULT_SETTINGS.reviewPromptTemplate;
+    const currentDiscussionTemplate = String(state.settings.discussionPromptTemplate || '');
+    const shouldResetDiscussionTemplate =
+        currentDiscussionTemplate.includes('<button id="start-review-btn"')
+        || currentDiscussionTemplate.includes('<div id="review-progress">')
+        || currentDiscussionTemplate.includes('<div id="result-board">')
+        || currentDiscussionTemplate.includes('?/button>')
+        || currentDiscussionTemplate.includes('?/div>')
+        || currentDiscussionTemplate.includes('?/span>');
+
+    if (shouldResetDiscussionTemplate) {
+        state.settings.discussionPromptTemplate = DEFAULT_SETTINGS.discussionPromptTemplate;
+        saveRtSettings({ discussionPromptTemplate: DEFAULT_SETTINGS.discussionPromptTemplate }).catch(console.error);
+    }
+
+    state.reviewMode = normalizeReviewMode(state.settings.reviewMode);
+    state.labelMode = normalizeLabelMode(state.settings.labelMode);
+
+    if (refs.reviewMode) refs.reviewMode.value = state.reviewMode;
+    if (refs.labelMode) refs.labelMode.value = state.labelMode;
+
+    refreshTemplateEditorForCurrentMode();
+    updateReviewModeUI();
+    syncReviewControlsState();
+}
+
+function normalizeReviewMode(value) {
+    return String(value || '').trim().toLowerCase() === REVIEW_MODES.discussion
+        ? REVIEW_MODES.discussion
+        : REVIEW_MODES.scoring;
+}
+
+function normalizeLabelMode(value) {
+    return String(value || '').trim().toLowerCase() === LABEL_MODES.named
+        ? LABEL_MODES.named
+        : LABEL_MODES.blind;
+}
+
+function getTemplateKeyByMode(mode) {
+    return normalizeReviewMode(mode) === REVIEW_MODES.discussion ? 'discussionPromptTemplate' : 'reviewPromptTemplate';
+}
+
+function getDefaultTemplateByMode(mode) {
+    return normalizeReviewMode(mode) === REVIEW_MODES.discussion
+        ? DEFAULT_SETTINGS.discussionPromptTemplate
+        : DEFAULT_SETTINGS.reviewPromptTemplate;
+}
+
+function getCurrentReviewMode() {
+    return normalizeReviewMode(refs.reviewMode?.value || state.reviewMode);
+}
+
+function getCurrentLabelMode() {
+    return normalizeLabelMode(refs.labelMode?.value || state.labelMode);
+}
+
+function updateReviewModeUI() {
+    const mode = getCurrentReviewMode();
+    refs.startReviewBtn.textContent = mode === REVIEW_MODES.discussion ? 'Start Discussion Review' : 'Start Scoring Review';
+    refs.reviewTemplate.placeholder = mode === REVIEW_MODES.discussion
+        ? 'Discussion template (supports {{question}} and {{answers}})'
+        : 'Scoring template (supports {{question}} and {{answers}})';
+}
+
+function syncReviewControlsState() {
+    const reviewLocked = state.activeRound?.status === 'reviewing';
+    const requestPending = state.isStartingReview === true;
+
+    refs.reviewTemplate.disabled = reviewLocked || requestPending;
+    refs.startReviewBtn.disabled = requestPending;
+    refs.reviewMode.disabled = requestPending;
+    refs.labelMode.disabled = requestPending;
+}
+
+function refreshTemplateEditorForCurrentMode() {
+    const mode = getCurrentReviewMode();
+    const key = getTemplateKeyByMode(mode);
+    refs.reviewTemplate.value = String(state.settings[key] || getDefaultTemplateByMode(mode));
+}
+
+async function persistCurrentTemplate() {
+    const mode = getCurrentReviewMode();
+    const key = getTemplateKeyByMode(mode);
+    const value = refs.reviewTemplate.value || getDefaultTemplateByMode(mode);
+    state.settings[key] = value;
+    await saveRtSettings({ [key]: value });
+}
+
+async function onReviewModeChange() {
+    const prevMode = state.reviewMode;
+    const nextMode = getCurrentReviewMode();
+
+    if (prevMode !== nextMode) {
+        const prevKey = getTemplateKeyByMode(prevMode);
+        const prevTemplate = refs.reviewTemplate.value || getDefaultTemplateByMode(prevMode);
+        state.settings[prevKey] = prevTemplate;
+        await saveRtSettings({ [prevKey]: prevTemplate });
+    }
+
+    state.reviewMode = nextMode;
+    state.settings.reviewMode = nextMode;
+    await saveRtSettings({ reviewMode: nextMode });
+    refreshTemplateEditorForCurrentMode();
+    updateReviewModeUI();
+}
+
+async function onLabelModeChange() {
+    const nextMode = getCurrentLabelMode();
+    state.labelMode = nextMode;
+    state.settings.labelMode = nextMode;
+    await saveRtSettings({ labelMode: nextMode });
 }
 
 async function loadLatestRound() {
@@ -191,6 +372,7 @@ async function setActiveRound(roundId) {
         renderJudgeStatusList();
         renderResultBoard();
         syncCandidateButtons();
+        syncReviewControlsState();
         return;
     }
 
@@ -209,6 +391,7 @@ async function setActiveRound(roundId) {
     renderJudgeStatusList();
     renderResultBoard();
     syncCandidateButtons();
+    syncReviewControlsState();
 }
 
 function isCandidateInActiveRound(candidateId) {
@@ -240,34 +423,470 @@ async function ensureRoundForBroadcast(question, targetModels) {
 async function onBroadcast() {
     const text = String(refs.globalInput.value || '').trim();
     if (!text) {
-        alert('请先输入问题');
+        setBroadcastStatus('error', 'Please enter a question before broadcasting.');
         return;
     }
-
     const targets = getCheckedValues('.target-selector input[type="checkbox"]');
     if (targets.length === 0) {
-        alert('请至少选择一个目标模型');
+        setBroadcastStatus('error', 'Please select at least one target model.');
+        return;
+    }
+    const validation = validateBroadcastFiles(state.broadcastFiles);
+    if (!validation.ok) {
+        setBroadcastStatus('error', validation.message);
         return;
     }
 
     refs.broadcastBtn.disabled = true;
+    if (refs.broadcastAttachBtn) refs.broadcastAttachBtn.disabled = true;
+    if (refs.broadcastClearFilesBtn) refs.broadcastClearFilesBtn.disabled = true;
+    setBroadcastStatus('info', 'Broadcasting...');
+
     try {
+        const attachments = await buildBroadcastAttachments(state.broadcastFiles);
         await ensureRoundForBroadcast(text, targets);
-        await sendMessage({
+        const response = await sendMessage({
             type: 'BROADCAST',
             text,
-            targets
+            targets,
+            attachments
         });
+
+        if (response?.status !== 'broadcast_done') {
+            const degraded = Array.isArray(response?.degraded) ? response.degraded : [];
+            const skipped = Array.isArray(response?.skipped) ? response.skipped : [];
+            const failed = Array.isArray(response?.failed) ? response.failed : [];
+            const details = (degraded.length > 0 || skipped.length > 0 || failed.length > 0)
+                ? buildBroadcastOutcomeMessage([], degraded, skipped, failed)
+                : '';
+            setBroadcastStatus('error', getBroadcastErrorMessage(response), details);
+            return;
+        }
+
+        const sentModels = Array.isArray(response?.sentModels) ? response.sentModels : [];
+        const degraded = Array.isArray(response?.degraded) ? response.degraded : [];
+        const skipped = Array.isArray(response?.skipped) ? response.skipped : [];
+        const failed = Array.isArray(response?.failed) ? response.failed : [];
+
+        if (sentModels.length > 0) {
+            clearBroadcastFiles();
+        }
+
+        if (degraded.length > 0 || skipped.length > 0 || failed.length > 0) {
+            setBroadcastStatus('warn', buildBroadcastOutcomeMessage(sentModels, degraded, skipped, failed));
+        } else {
+            setBroadcastStatus('success', `Broadcast sent to ${sentModels.length} model(s).`);
+        }
     } catch (error) {
         console.error(error);
-        alert(`Broadcast 失败: ${error.message}`);
+        setBroadcastStatus('error', `Broadcast failed: ${error.message || String(error)}`);
     } finally {
         refs.broadcastBtn.disabled = false;
+        if (refs.broadcastAttachBtn) refs.broadcastAttachBtn.disabled = false;
+        if (refs.broadcastClearFilesBtn) refs.broadcastClearFilesBtn.disabled = false;
     }
 }
 
+function renderBroadcastFileList() {
+    if (!refs.broadcastFileList) return;
+
+    if (!Array.isArray(state.broadcastFiles) || state.broadcastFiles.length === 0) {
+        refs.broadcastFileList.innerHTML = '<div class="empty">No files selected.</div>';
+        if (refs.broadcastClearFilesBtn) refs.broadcastClearFilesBtn.disabled = true;
+        return;
+    }
+
+    refs.broadcastFileList.innerHTML = state.broadcastFiles.map((file, index) => {
+        const name = escapeHtml(String(file?.name || `file-${index + 1}`));
+        const sizeText = escapeHtml(formatBytes(Number(file?.size || 0)));
+        return `<div class="file-item">${index + 1}. ${name} (${sizeText})</div>`;
+    }).join('');
+    if (refs.broadcastClearFilesBtn) refs.broadcastClearFilesBtn.disabled = false;
+}
+
+function renderBroadcastStatus() {
+    if (!refs.broadcastFileStatus) return;
+
+    const level = String(state.broadcastStatus?.level || 'info').toLowerCase();
+    const safeLevel = ['info', 'success', 'warn', 'error'].includes(level) ? level : 'info';
+    const message = String(state.broadcastStatus?.message || '').trim();
+    const details = String(state.broadcastStatus?.details || '').trim();
+
+    refs.broadcastFileStatus.className = `file-status ${safeLevel}`;
+    refs.broadcastFileStatus.innerText = details ? `${message}\n${details}` : message;
+}
+
+function setBroadcastStatus(level, message, details = '') {
+    state.broadcastStatus = {
+        level: String(level || 'info').toLowerCase(),
+        message: String(message || ''),
+        details: String(details || '')
+    };
+    renderBroadcastStatus();
+}
+
+function onBroadcastAttachClick() {
+    refs.broadcastFileInput?.click();
+}
+
+function onSelectBroadcastFiles(event) {
+    const input = event?.target;
+    const files = Array.from(input?.files || []);
+    mergeBroadcastFiles(files, 'Selected files');
+    if (input) input.value = '';
+}
+
+function onClearBroadcastFiles() {
+    clearBroadcastFiles();
+    setBroadcastStatus('info', 'Attachments cleared.');
+}
+
+function clearBroadcastFiles() {
+    state.broadcastFiles = [];
+    if (refs.broadcastFileInput) refs.broadcastFileInput.value = '';
+    renderBroadcastFileList();
+}
+
+function onPanelPaste(event) {
+    const clipboardData = event?.clipboardData;
+    if (!clipboardData) return;
+
+    const files = extractFilesFromClipboardData(clipboardData);
+    if (files.length === 0) {
+        return;
+    }
+
+    event.preventDefault();
+    mergeBroadcastFiles(files, 'Pasted files');
+}
+
+function onPanelDragEnter(event) {
+    if (!hasFilePayload(event?.dataTransfer)) return;
+    event.preventDefault();
+    state.dragDepth += 1;
+    document.body.classList.add('drag-active');
+}
+
+function onPanelDragOver(event) {
+    if (!hasFilePayload(event?.dataTransfer)) return;
+    event.preventDefault();
+    if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = 'copy';
+    }
+}
+
+function onPanelDragLeave(event) {
+    if (!hasFilePayload(event?.dataTransfer)) return;
+    event.preventDefault();
+    state.dragDepth = Math.max(0, state.dragDepth - 1);
+    if (state.dragDepth === 0) {
+        document.body.classList.remove('drag-active');
+    }
+}
+
+function onPanelDrop(event) {
+    if (!hasFilePayload(event?.dataTransfer)) return;
+    event.preventDefault();
+    state.dragDepth = 0;
+    document.body.classList.remove('drag-active');
+
+    const files = Array.from(event?.dataTransfer?.files || []);
+    mergeBroadcastFiles(files, 'Dropped files');
+}
+
+function hasFilePayload(dataTransfer) {
+    if (!dataTransfer) return false;
+    if (dataTransfer.files && dataTransfer.files.length > 0) return true;
+    const types = Array.from(dataTransfer.types || []);
+    return types.includes('Files');
+}
+
+function extractFilesFromClipboardData(clipboardData) {
+    const files = [];
+    const items = Array.from(clipboardData.items || []);
+
+    for (const item of items) {
+        if (item?.kind !== 'file') continue;
+        const file = item.getAsFile?.();
+        if (file) files.push(file);
+    }
+
+    if (files.length > 0) {
+        return files;
+    }
+
+    return Array.from(clipboardData.files || []);
+}
+
+function mergeBroadcastFiles(rawFiles, sourceLabel = 'Files') {
+    const incoming = normalizeIncomingFiles(rawFiles);
+    if (incoming.length === 0) {
+        setBroadcastStatus('warn', `${sourceLabel}: no usable file detected.`);
+        return;
+    }
+
+    const existingFingerprints = new Set(state.broadcastFiles.map(getFileFingerprint));
+    const uniqueFiles = [];
+    const duplicateFiles = [];
+
+    for (const file of incoming) {
+        const fingerprint = getFileFingerprint(file);
+        if (existingFingerprints.has(fingerprint)) {
+            duplicateFiles.push(file);
+            continue;
+        }
+        existingFingerprints.add(fingerprint);
+        uniqueFiles.push(file);
+    }
+
+    let candidates = uniqueFiles;
+    let duplicateAction = 'skipped';
+
+    if (duplicateFiles.length > 0) {
+        const keepDuplicates = confirm(`Detected ${duplicateFiles.length} duplicate file(s). Keep duplicates?`);
+        if (keepDuplicates) {
+            duplicateAction = 'kept';
+            candidates = uniqueFiles.concat(duplicateFiles);
+        }
+    }
+
+    const accepted = [];
+    const rejectedType = [];
+    const rejectedSize = [];
+
+    for (const file of candidates) {
+        const validation = validateSingleBroadcastFile(file);
+        if (!validation.ok) {
+            if (validation.reason === 'size') {
+                rejectedSize.push(file);
+            } else {
+                rejectedType.push(file);
+            }
+            continue;
+        }
+        accepted.push(file);
+    }
+
+    const availableSlots = Math.max(0, BROADCAST_MAX_FILES - state.broadcastFiles.length);
+    const kept = accepted.slice(0, availableSlots);
+    const overflowCount = Math.max(0, accepted.length - kept.length);
+
+    if (kept.length > 0) {
+        state.broadcastFiles = state.broadcastFiles.concat(kept);
+    }
+
+    renderBroadcastFileList();
+
+    const details = [];
+    details.push(`Added ${kept.length} file(s).`);
+    if (duplicateFiles.length > 0) details.push(`Duplicates ${duplicateAction}: ${duplicateFiles.length}.`);
+    if (rejectedType.length > 0) details.push(`Type rejected: ${rejectedType.length}.`);
+    if (rejectedSize.length > 0) details.push(`Size rejected: ${rejectedSize.length}.`);
+    if (overflowCount > 0) details.push(`Skipped by limit (${BROADCAST_MAX_FILES} files max): ${overflowCount}.`);
+
+    const totalRejected = rejectedType.length + rejectedSize.length + overflowCount + (duplicateAction === 'skipped' ? duplicateFiles.length : 0);
+
+    if (kept.length > 0 && totalRejected === 0) {
+        setBroadcastStatus('success', `${sourceLabel} queued.`, details.join(' '));
+        return;
+    }
+
+    if (kept.length > 0) {
+        setBroadcastStatus('warn', `${sourceLabel} partially queued.`, details.join(' '));
+        return;
+    }
+
+    setBroadcastStatus('error', `${sourceLabel} not queued.`, details.join(' '));
+}
+
+function normalizeIncomingFiles(rawFiles) {
+    const normalized = [];
+    const files = Array.from(rawFiles || []);
+
+    for (const file of files) {
+        if (!(file instanceof File)) continue;
+        normalized.push(ensureFileName(file));
+    }
+
+    return normalized;
+}
+
+function ensureFileName(file) {
+    const name = String(file?.name || '').trim();
+    if (name) {
+        return file;
+    }
+
+    const mimeType = String(file?.type || '').toLowerCase();
+    const guessedExt = Object.entries(BROADCAST_EXT_TO_MIME)
+        .find(([, mime]) => mime === mimeType)?.[0] || '.bin';
+    const generatedName = `pasted-${Date.now()}${guessedExt}`;
+
+    return new File([file], generatedName, {
+        type: mimeType || 'application/octet-stream',
+        lastModified: Number(file?.lastModified || Date.now())
+    });
+}
+
+function validateBroadcastFiles(files) {
+    const list = Array.from(files || []);
+
+    if (list.length > BROADCAST_MAX_FILES) {
+        return {
+            ok: false,
+            message: `Too many attachments. Max ${BROADCAST_MAX_FILES} files are allowed.`
+        };
+    }
+
+    for (const file of list) {
+        const validation = validateSingleBroadcastFile(file);
+        if (!validation.ok) {
+            if (validation.reason === 'size') {
+                return {
+                    ok: false,
+                    message: `File too large: ${file.name} (max ${formatBytes(BROADCAST_MAX_FILE_BYTES)}).`
+                };
+            }
+            return {
+                ok: false,
+                message: `Unsupported file type: ${file.name}.`
+            };
+        }
+    }
+
+    return { ok: true };
+}
+
+function validateSingleBroadcastFile(file) {
+    const size = Number(file?.size || 0);
+    if (!Number.isFinite(size) || size <= 0 || size > BROADCAST_MAX_FILE_BYTES) {
+        return { ok: false, reason: 'size' };
+    }
+
+    const ext = getFileExtension(file?.name);
+    const mimeType = String(file?.type || '').toLowerCase();
+    const resolvedMime = mimeType || BROADCAST_EXT_TO_MIME[ext] || '';
+    const allowed = BROADCAST_ALLOWED_MIME.has(resolvedMime) || BROADCAST_ALLOWED_EXT.has(ext);
+
+    if (!allowed) {
+        return { ok: false, reason: 'type' };
+    }
+
+    return { ok: true, mimeType: resolvedMime || 'application/octet-stream' };
+}
+
+function getFileExtension(name) {
+    const value = String(name || '').toLowerCase();
+    const idx = value.lastIndexOf('.');
+    if (idx < 0) return '';
+    return value.slice(idx);
+}
+
+function getFileFingerprint(file) {
+    return `${String(file?.name || '')}::${Number(file?.size || 0)}::${Number(file?.lastModified || 0)}`;
+}
+
+async function buildBroadcastAttachments(files) {
+    const list = Array.from(files || []);
+    const attachments = [];
+
+    for (const file of list) {
+        const validation = validateSingleBroadcastFile(file);
+        if (!validation.ok) {
+            throw new Error(`Invalid attachment: ${file?.name || 'unknown file'}`);
+        }
+
+        const base64 = await fileToBase64(file);
+        attachments.push({
+            name: String(file?.name || 'attachment'),
+            mimeType: validation.mimeType || 'application/octet-stream',
+            size: Number(file?.size || 0),
+            base64
+        });
+    }
+
+    return attachments;
+}
+
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        reader.onload = () => {
+            const dataUrl = String(reader.result || '');
+            const commaIndex = dataUrl.indexOf(',');
+            resolve(commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl);
+        };
+
+        reader.onerror = () => {
+            reject(new Error(`Failed to read file: ${file?.name || 'unknown file'}`));
+        };
+
+        reader.readAsDataURL(file);
+    });
+}
+
+function getBroadcastErrorMessage(response) {
+    const code = String(response?.code || '').trim().toLowerCase();
+    if (code === 'invalid_attachments') {
+        return response?.message || 'Invalid attachments. Please check file size and type.';
+    }
+    if (code === 'broadcast_no_supported_targets') {
+        return response?.message || 'No selected model supports the provided attachments.';
+    }
+    if (code === 'send_not_confirmed') {
+        return response?.message || 'Message was injected but send was not confirmed. Please check model page and retry.';
+    }
+    return response?.message || 'Broadcast failed.';
+}
+
+function buildBroadcastOutcomeMessage(sentModels, degraded, skipped, failed) {
+    const sentCount = Array.isArray(sentModels) ? sentModels.length : 0;
+    const degradedItems = Array.isArray(degraded) ? degraded : [];
+    const skippedItems = Array.isArray(skipped) ? skipped : [];
+    const failedItems = Array.isArray(failed) ? failed : [];
+
+    const segments = [`Sent ${sentCount} model(s).`];
+
+    if (degradedItems.length > 0) {
+        const degradedDetail = degradedItems
+            .map((item) => `${item.model}: ${item.code}`)
+            .join(', ');
+        segments.push(`Attachment downgraded to text on ${degradedItems.length} model(s) (${degradedDetail}).`);
+    }
+
+    if (skippedItems.length > 0) {
+        const skippedDetail = skippedItems
+            .map((item) => `${item.model}: ${item.code}`)
+            .join(', ');
+        segments.push(`Skipped ${skippedItems.length} (${skippedDetail}).`);
+    }
+
+    if (failedItems.length > 0) {
+        const failedDetail = failedItems
+            .map((item) => {
+                if (String(item?.code || '') === 'send_not_confirmed') {
+                    return `${item.model}: send_not_confirmed (check model page and retry)`;
+                }
+                return `${item.model}: ${item.code}`;
+            })
+            .join(', ');
+        segments.push(`Failed ${failedItems.length} (${failedDetail}).`);
+    }
+
+    return segments.join(' ');
+}
+
+function formatBytes(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return '0 B';
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 function getManualRoundQuestion() {
-    return String(refs.globalInput?.value || '').trim() || '手动回合';
+    return String(refs.globalInput?.value || '').trim() || '閹靛濮╅崶鐐叉値';
 }
 
 function getManualRoundTargetModels() {
@@ -287,7 +906,7 @@ async function resolveRoundForCandidate() {
 
     if (['reviewing', 'completed', 'failed'].includes(status)) {
         const createNewRound = confirm(
-            '当前回合正在评审或已结束。\n确定：新建回合并加入候选\n取消：继续加入当前回合'
+            'Current round is already closed or reviewing. Create a new round for this candidate?'
         );
         if (createNewRound) {
             return { roundId: null, createRoundIfMissing: true };
@@ -302,15 +921,15 @@ function getCandidateAddErrorMessage(response) {
     const code = String(response?.code || '').trim().toLowerCase();
 
     if (code === 'candidate_summary_missing') {
-        return '该模型暂无可抓取回答。请先到对应官网完成一轮回复，再点加入候选。';
+        return 'No captured answer found for this model. Wait for model output, then try again.';
     }
     if (code === 'round_not_found') {
-        return '当前回合不存在，请重试加入候选。';
+        return 'The selected round was not found. Please refresh and try again.';
     }
     if (code === 'invalid_request') {
-        return response?.message || '加入候选请求无效';
+        return response?.message || 'Invalid request when adding candidate.';
     }
-    return response?.message || '加入候选失败';
+    return response?.message || 'Failed to add candidate.';
 }
 
 async function onAddCandidate(model) {
@@ -340,13 +959,13 @@ async function onAddCandidate(model) {
         }
 
         if (response?.duplicate) {
-            alert('已存在相同候选，未重复添加。');
+            alert('This answer is already in the round. No duplicate candidate was added.');
         }
 
         await setActiveRound(response.roundId || resolved.roundId || state.activeRoundId);
     } catch (error) {
         console.error(error);
-        alert(`加入候选失败: ${error.message}`);
+        alert(`Failed to add candidate: ${error.message}`);
     }
 }
 
@@ -372,14 +991,14 @@ function removeQuote(index) {
 
 function renderQuoteList() {
     if (state.quoteList.length === 0) {
-        refs.quoteList.innerHTML = '<div class="empty">点击“引用”把回答加入路由区</div>';
+        refs.quoteList.innerHTML = '<div class="empty">閻愮懓鍤垾婊冪穿閻劉鈧繃濡搁崶鐐电摕閸旂姴鍙嗙捄顖滄暠閸?/div>';
         return;
     }
 
     refs.quoteList.innerHTML = state.quoteList
         .map((quote, index) => (
             `<div class="quote-item" data-index="${index}">
-                <span class="quote-close">×</span>
+                <span class="quote-close">鑴?/span>
                 <strong>${escapeHtml(quote.source)}</strong><br>
                 ${escapeHtml(shorten(quote.text, 220))}
             </div>`
@@ -401,13 +1020,13 @@ function updateRouteExclusions() {
 
 async function onRoute() {
     if (state.quoteList.length === 0) {
-        alert('请先引用至少一条内容');
+        alert('Please quote at least one model answer before routing.');
         return;
     }
 
     const targets = getCheckedValues('.router-targets input[type="checkbox"]');
     if (targets.length === 0) {
-        alert('请至少选择一个路由目标');
+        alert('Please select at least one routing target.');
         return;
     }
 
@@ -426,70 +1045,100 @@ async function onRoute() {
         });
     } catch (error) {
         console.error(error);
-        alert(`Route 失败: ${error.message}`);
+        alert(`Route failed: ${error.message}`);
     }
 }
 
 async function onStartReview() {
-    if (!state.activeRoundId || !state.activeRound) {
-        alert('没有可评审的回合，请先加入候选（可不 Broadcast）');
+    if (state.isStartingReview) {
         return;
     }
 
-    if ((state.activeRound.candidateIds || []).length < 2) {
-        alert('至少需要 2 个候选答案才能评审');
+    if (!state.activeRoundId || !state.activeRound) {
+        alert('No active round found. Please broadcast first to create a round.');
+        return;
+    }
+
+    if (
+        state.activeRound.status === 'reviewing'
+        && !confirm('Current review is running. Restarting will overwrite unfinished judge results. Continue?')
+    ) {
+        return;
+    }
+
+    const reviewMode = getCurrentReviewMode();
+    const labelMode = getCurrentLabelMode();
+    const minCandidates = reviewMode === REVIEW_MODES.discussion ? 1 : 2;
+    if ((state.activeRound.candidateIds || []).length < minCandidates) {
+        if (reviewMode === REVIEW_MODES.discussion) {
+            alert('Discussion review requires at least 1 candidate.');
+        } else {
+            alert('Scoring review requires at least 2 candidates.');
+        }
         return;
     }
 
     const judgeModels = getCheckedValues('.judge-targets input[type="checkbox"]');
     if (judgeModels.length === 0) {
-        alert('请至少选择一个评委模型');
+        alert('Please select at least one judge model.');
         return;
     }
-    if (judgeModels.length < 2 && !confirm('评委少于2个，结果稳定性较低。确定继续？')) {
+    if (reviewMode === REVIEW_MODES.scoring && judgeModels.length < 2 && !confirm('Scoring with fewer than 2 judges may be unstable. Continue?')) {
         return;
     }
 
-    const promptTemplate = refs.reviewTemplate.value || DEFAULT_SETTINGS.reviewPromptTemplate;
-    refs.startReviewBtn.disabled = true;
-    refs.reviewTemplate.disabled = true;
+    const promptTemplate = refs.reviewTemplate.value || getDefaultTemplateByMode(reviewMode);
+    state.isStartingReview = true;
+    syncReviewControlsState();
 
     try {
-        await saveRtSettings({ reviewPromptTemplate: promptTemplate });
+        const templateKey = getTemplateKeyByMode(reviewMode);
+        state.reviewMode = reviewMode;
+        state.labelMode = labelMode;
+        state.settings.reviewMode = reviewMode;
+        state.settings.labelMode = labelMode;
+        state.settings[templateKey] = promptTemplate;
+
+        await saveRtSettings({
+            reviewMode,
+            labelMode,
+            [templateKey]: promptTemplate
+        });
+
         const response = await sendMessage({
             type: 'ROUND_START_REVIEW',
             roundId: state.activeRoundId,
             judgeModels,
             promptTemplate,
+            mode: reviewMode,
+            labelMode,
             weights: FIXED_WEIGHTS,
             selfReviewWeight: 0.2
         });
 
         if (response?.status !== 'review_started') {
             if (response?.code === 'candidate_answer_missing') {
-                alert('当前回合候选回答为空，请重新加入候选后再评审。');
+                alert('Current round has no usable candidate answers. Add candidates before starting review.');
             } else {
-                alert(response?.message || '开始评审失败');
+                alert(response?.message || 'Failed to start review.');
             }
         }
         await setActiveRound(state.activeRoundId);
     } catch (error) {
         console.error(error);
-        alert(`开始评审失败: ${error.message}`);
+        alert(`Failed to start review: ${error.message}`);
     } finally {
-        if (state.activeRound?.status !== 'reviewing') {
-            refs.startReviewBtn.disabled = false;
-            refs.reviewTemplate.disabled = false;
-        }
+        state.isStartingReview = false;
+        syncReviewControlsState();
     }
 }
 
 async function onDeleteRound() {
     if (!state.activeRoundId) {
-        alert('当前没有回合');
+        alert('No active round to delete.');
         return;
     }
-    if (!confirm('确定删除当前回合及其候选/评审记录？')) {
+    if (!confirm('Delete current round? This action cannot be undone.')) {
         return;
     }
 
@@ -498,7 +1147,7 @@ async function onDeleteRound() {
         await loadLatestRound();
     } catch (error) {
         console.error(error);
-        alert(`删除失败: ${error.message}`);
+        alert(`Failed to delete round: ${error.message}`);
     }
 }
 
@@ -513,8 +1162,11 @@ function onToggleCandidateDetails(candidateId) {
 }
 
 function onResetTemplate() {
-    refs.reviewTemplate.value = DEFAULT_SETTINGS.reviewPromptTemplate;
-    saveRtSettings({ reviewPromptTemplate: refs.reviewTemplate.value }).catch(console.error);
+    const mode = getCurrentReviewMode();
+    const key = getTemplateKeyByMode(mode);
+    refs.reviewTemplate.value = getDefaultTemplateByMode(mode);
+    state.settings[key] = refs.reviewTemplate.value;
+    saveRtSettings({ [key]: refs.reviewTemplate.value }).catch(console.error);
 }
 
 function onRoundEvent(message) {
@@ -536,6 +1188,8 @@ function onRoundEvent(message) {
     ].includes(message.event)) {
         setActiveRound(state.activeRoundId).catch(console.error);
     }
+
+    syncReviewControlsState();
 }
 
 function renderRound() {
@@ -545,9 +1199,9 @@ function renderRound() {
         refs.roundStatus.innerText = 'none';
         refs.roundCandidateCount.innerText = '0';
         refs.roundCreatedAt.innerText = '-';
-        refs.roundQuestion.innerText = '当前未创建回合';
-        refs.reviewTemplate.disabled = false;
-        refs.startReviewBtn.disabled = false;
+        refs.roundQuestion.innerText = 'No active round.';
+        updateReviewModeUI();
+        syncReviewControlsState();
         syncCandidateButtons();
         return;
     }
@@ -557,28 +1211,26 @@ function renderRound() {
     refs.roundCandidateCount.innerText = String((round.candidateIds || []).length);
     refs.roundCreatedAt.innerText = new Date(round.createdAt).toLocaleString();
     refs.roundQuestion.innerText = round.question || '(empty question)';
-
-    const reviewLocked = round.status === 'reviewing';
-    refs.reviewTemplate.disabled = reviewLocked;
-    refs.startReviewBtn.disabled = reviewLocked;
+    updateReviewModeUI();
+    syncReviewControlsState();
 }
 
 function renderReviewProgress() {
     if (!state.activeRound) {
-        refs.reviewProgress.innerText = '等待开始评审';
+        refs.reviewProgress.innerText = 'No active round.';
         return;
     }
 
     const evaluations = state.activeRound.evaluations || [];
     if (evaluations.length === 0) {
-        refs.reviewProgress.innerText = '尚未开始评审';
+        refs.reviewProgress.innerText = 'Review has not started yet.';
         return;
     }
 
     const done = evaluations.filter((e) => e.status === 'done').length;
     const failed = evaluations.filter((e) => e.status === 'parse_failed' || e.status === 'timeout').length;
     const pending = evaluations.length - done - failed;
-    refs.reviewProgress.innerText = `评审进度: done ${done} / failed ${failed} / pending ${pending}`;
+    refs.reviewProgress.innerText = `鐎孤ゎ唴鏉╂稑瀹? done ${done} / failed ${failed} / pending ${pending}`;
 }
 
 function renderJudgeStatusList() {
@@ -588,7 +1240,7 @@ function renderJudgeStatusList() {
     const evaluations = Array.isArray(round?.evaluations) ? round.evaluations : [];
 
     if (evaluations.length === 0) {
-        refs.judgeStatusList.innerHTML = '<div class="empty">No judge tasks yet</div>';
+        refs.judgeStatusList.innerHTML = '<div class="empty">閺嗗倹妫ょ拠鍕潤娴犺濮?/div>';
         return;
     }
 
@@ -616,8 +1268,13 @@ function renderJudgeStatusList() {
 
 function renderResultBoard() {
     const round = state.activeRound;
+    if (isDiscussionRound(round)) {
+        renderDiscussionResultBoard(round);
+        return;
+    }
+
     if (!round || !Array.isArray(round.ranking) || round.ranking.length === 0) {
-        refs.resultBoard.innerHTML = '<div class="empty">No ranking results yet.</div>';
+        refs.resultBoard.innerHTML = '<div class="empty">閺嗗倹妫ら幒鎺戞倳缂佹挻鐏?/div>';
         state.selectedCandidateId = null;
         return;
     }
@@ -626,7 +1283,7 @@ function renderResultBoard() {
         .filter((evaluation) => normalizeEvaluationStatus(evaluation.status) === 'done')
         .length;
     if (doneCount === 0) {
-        refs.resultBoard.innerHTML = '<div class="empty">No valid judge scores yet.</div>';
+        refs.resultBoard.innerHTML = '<div class="empty">閺嗗倹妫ら張澶嬫櫏鐠囧嫬鍨庣紒鎾寸亯</div>';
         state.selectedCandidateId = null;
         return;
     }
@@ -651,14 +1308,50 @@ function renderResultBoard() {
         return `
             <div class="rank-row ${selected ? 'selected' : ''}" data-candidate-id="${escapeHtml(item.candidateId)}">
                 <div class="rank-title">#${index + 1} ${escapeHtml(model)} | Final ${formatScore(item.finalScore)}</div>
-                <div class="small-muted">raw ${formatScore(item.rawMean)} · normalized ${formatScore(item.normalizedMean)} · non-self ${formatScore(item.nonSelfMean)} · variance ${formatScore(item.variance)}</div>
+                <div class="small-muted">raw ${formatScore(item.rawMean)} 璺?normalized ${formatScore(item.normalizedMean)} 璺?non-self ${formatScore(item.nonSelfMean)} 璺?variance ${formatScore(item.variance)}</div>
                 <div style="margin-top:4px;">${escapeHtml(answerSnippet)}</div>
-                ${reasons ? `<div class="small-muted" style="margin-top:4px;">评审理由: ${escapeHtml(reasons)}</div>` : ''}
-                <div class="small-muted" style="margin-top:4px;">${selected ? 'Click to collapse judge details' : 'Click to view judge details'}</div>
+                ${reasons ? `<div class="small-muted" style="margin-top:4px;">鐠囧嫬顓搁悶鍡欐暠: ${escapeHtml(reasons)}</div>` : ''}
+                <div class="small-muted" style="margin-top:4px;">${selected ? '閻愮懓鍤弨鎯版崳鐠囧嫬顫欑拠锔藉剰' : '閻愮懓鍤弻銉ф箙鐠囧嫬顫欑拠锔藉剰'}</div>
                 ${detailHtml}
             </div>
         `;
     }).join('');
+}
+
+function renderDiscussionResultBoard(round) {
+    state.selectedCandidateId = null;
+
+    if (!round) {
+        refs.resultBoard.innerHTML = '<div class="empty">閺嗗倹妫ょ拋銊啈缂佹挻鐏?/div>';
+        return;
+    }
+
+    const evaluations = Array.isArray(round.evaluations) ? [...round.evaluations] : [];
+    if (evaluations.length === 0) {
+        refs.resultBoard.innerHTML = '<div class="empty">閺嗗倹妫ょ拋銊啈缂佹挻鐏?/div>';
+        return;
+    }
+
+    evaluations.sort((a, b) => String(a?.judgeModel || '').localeCompare(String(b?.judgeModel || '')));
+
+    refs.resultBoard.innerHTML = evaluations.map((evaluation) => {
+        const status = normalizeEvaluationStatus(evaluation?.status);
+        const model = evaluation?.judgeModel || 'Unknown';
+        const detail = getEvaluationStatusDetail(evaluation);
+        const raw = String(evaluation?.rawResponse || '').trim();
+        const text = raw || (status === 'done' ? '[鐠併劏顔戦崶鐐差槻娑撹櫣鈹朷' : detail);
+        return `
+            <div class="rank-row">
+                <div class="rank-title">${escapeHtml(model)}</div>
+                <div class="small-muted" style="margin-bottom:4px;">閻樿埖鈧? <span class="status-pill ${escapeHtml(status)}">${escapeHtml(status)}</span></div>
+                <div class="rank-judge-text" style="margin-top:0; white-space: pre-wrap; word-break: break-word;">${escapeHtml(text)}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function isDiscussionRound(round) {
+    return normalizeReviewMode(round?.config?.reviewMode) === REVIEW_MODES.discussion;
 }
 
 function renderCandidateJudgeDetails(round, candidateId) {
@@ -761,8 +1454,14 @@ function normalizeEvaluationStatus(status) {
 function getEvaluationStatusDetail(evaluation) {
     const status = normalizeEvaluationStatus(evaluation?.status);
     const scoreCount = Array.isArray(evaluation?.parsedScores) ? evaluation.parsedScores.length : 0;
+    const evaluationMode = normalizeReviewMode(evaluation?.mode || state.activeRound?.config?.reviewMode);
 
     if (status === 'done') {
+        if (evaluationMode === REVIEW_MODES.discussion) {
+            const raw = String(evaluation?.rawResponse || '').trim();
+            return raw ? `Discussion response captured (${raw.length} chars).` : 'Discussion response captured.';
+        }
+
         const normalizedBy = String(evaluation?.normalizedBy || '').trim();
         if (normalizedBy) {
             if (normalizedBy === 'deepseek-chat') {
@@ -794,7 +1493,7 @@ function syncCandidateButtons() {
     const hasRound = Boolean(state.activeRoundId);
     document.querySelectorAll('.btn-candidate').forEach((button) => {
         button.disabled = false;
-        button.title = hasRound ? '' : '将自动创建回合';
+        button.title = hasRound ? '' : 'Broadcast first to create a round.';
     });
 }
 
@@ -865,3 +1564,4 @@ function sendMessage(payload) {
         });
     });
 }
+

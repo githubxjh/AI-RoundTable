@@ -12,8 +12,9 @@ class DoubaoAdapter extends AdapterBase {
     getInputSelector() {
         return [
             'textarea[data-testid="chat_input_input"]',
-            'textarea[placeholder*="发送"]',
-            'textarea[placeholder*="输入"]'
+            'textarea[placeholder*="发消息"]',
+            'textarea[placeholder*="输入"]',
+            'textarea'
         ].join(', ');
     }
 
@@ -21,10 +22,40 @@ class DoubaoAdapter extends AdapterBase {
         return [
             'button[data-testid="chat_input_send"]',
             '[data-testid="chat_input_send"] button',
+            '[data-testid="chat_input"] button[aria-label*="发送"]',
+            '[data-testid="chat_input"] button[aria-label*="Send"]',
+            '[data-testid="chat_input"] button',
             'button[aria-label*="发送"]',
             'button[aria-label*="Send"]',
             'button[type="submit"]'
         ].join(', ');
+    }
+
+    getAttachmentInputSelector() {
+        return [
+            'input[data-testid="upload-file-input"][type="file"]',
+            'input[type="file"][accept*=".pdf"]',
+            'input[type="file"][accept*="image"]',
+            'input[type="file"][accept*="pdf"]',
+            'input[type="file"]'
+        ].join(', ');
+    }
+
+    getAttachmentBusySelectors() {
+        return [
+            '[data-testid="chat_input"] [aria-busy="true"]',
+            '[data-testid="chat_input"] [class*="uploading"]',
+            '[data-testid="chat_input"] [class*="loading"]',
+            '[data-testid="chat_input"] [role="progressbar"]'
+        ];
+    }
+
+    getAttachmentReadySelectors() {
+        return [
+            '[data-testid="chat_input"] [class*="file"]',
+            '[data-testid="chat_input"] [class*="attachment"]',
+            '[data-testid="chat_input"] [data-testid*="file"]'
+        ];
     }
 
     async handleInput(text) {
@@ -35,7 +66,7 @@ class DoubaoAdapter extends AdapterBase {
         this.simulateUserInput(inputEl, text);
         await this.delay(500);
 
-        const sendBtn = this.findSendButton();
+        const sendBtn = await this.waitForAvailableSendButton(2500);
         let sent = false;
         if (sendBtn) {
             this.simulateClick(sendBtn);
@@ -51,18 +82,54 @@ class DoubaoAdapter extends AdapterBase {
             throw new Error('DoubaoAdapter: failed to trigger send');
         }
 
-        this.onSendPostProcessing();
+        return {
+            inputEl,
+            text,
+            sendButtonBefore: sendBtn
+        };
     }
 
     findSendButton() {
         const selector = this.getSendBtnSelector();
-        const candidates = Array.from(document.querySelectorAll(selector));
+        let candidates = [];
+        try {
+            candidates = Array.from(document.querySelectorAll(selector));
+        } catch (error) {
+            console.warn('DoubaoAdapter: invalid send selector', error);
+            return null;
+        }
         for (const node of candidates) {
-            if (this.isSendButtonAvailable(node)) {
-                return node;
+            const target = this.resolveClickableTarget(node);
+            if (!target || !this.isSendButtonAvailable(target)) continue;
+            if (this.isLikelySendButton(target)) {
+                return target;
             }
         }
         return null;
+    }
+
+    isLikelySendButton(node) {
+        if (!node) return false;
+        const text = [
+            String(node.getAttribute('aria-label') || ''),
+            String(node.getAttribute('title') || ''),
+            String(node.getAttribute('data-testid') || ''),
+            String(node.className || ''),
+            String(node.innerText || '')
+        ].join(' ').toLowerCase();
+
+        if (/upload|attach|file|paperclip|上传|附件|asr|voice|mic/.test(text)) {
+            return false;
+        }
+
+        if (/send|发送|submit/.test(text)) return true;
+
+        const parent = node.closest('[data-testid="chat_input"]');
+        if (!parent) return false;
+        const siblings = Array.from(parent.querySelectorAll('button, [role="button"]'))
+            .filter((el) => this.isSendButtonAvailable(el));
+        if (siblings.length === 0) return false;
+        return siblings[siblings.length - 1] === node;
     }
 
     isSendButtonAvailable(node) {
@@ -110,6 +177,7 @@ class DoubaoAdapter extends AdapterBase {
             'button[data-testid="chat_input_stop"]',
             'button[aria-label*="停止"]',
             'button[aria-label*="Stop"]',
+            '[data-testid="chat_input"] [class*="stop"]',
             '[data-testid*="stop"]'
         ].join(', ');
         const stopBtn = document.querySelector(stopSelector);
