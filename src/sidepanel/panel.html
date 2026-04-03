@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI RoundTable</title>
+    <title>AI 圆桌</title>
     <style>
         :root {
             --bg: #f3f4f6;
@@ -15,6 +15,10 @@
             --danger: #dc2626;
             --success: #16a34a;
             --warning: #d97706;
+            --chip-bg: #f9fafb;
+            --chip-active-bg: #dbeafe;
+            --chip-active-line: #60a5fa;
+            --chip-active-text: #1d4ed8;
         }
 
         * {
@@ -65,10 +69,18 @@
             font-family: inherit;
             font-size: 12px;
             line-height: 1.45;
-        }        textarea:focus {
+        }
+
+        textarea:focus {
             outline: none;
             border-color: var(--primary);
         }
+
+        textarea[readonly] {
+            background: #f8fafc;
+            color: #334155;
+        }
+
         select {
             border: 1px solid var(--line);
             border-radius: 8px;
@@ -78,6 +90,7 @@
             color: var(--text);
             background: #fff;
         }
+
         select:focus {
             outline: none;
             border-color: var(--primary);
@@ -89,13 +102,16 @@
             gap: 10px;
             margin-top: 8px;
             margin-bottom: 8px;
-        }        .file-toolbar {
+        }
+
+        .file-toolbar {
             display: flex;
             align-items: center;
             gap: 6px;
             margin-bottom: 8px;
             flex-wrap: wrap;
         }
+
         .file-list {
             border: 1px solid var(--line);
             border-radius: 8px;
@@ -108,6 +124,7 @@
             max-height: 96px;
             overflow-y: auto;
         }
+
         .file-item {
             font-size: 11px;
             color: #374151;
@@ -322,21 +339,65 @@
             font-weight: 700;
         }
 
+        .router-group {
+            margin-bottom: 8px;
+        }
+
+        .router-group-title {
+            color: var(--muted);
+            font-size: 11px;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+
         .chip-row {
             display: flex;
             flex-wrap: wrap;
             gap: 6px;
-            margin-bottom: 8px;
         }
 
         .chip {
             border: 1px solid var(--line);
             border-radius: 999px;
-            background: #fff;
+            background: var(--chip-bg);
             color: var(--muted);
             font-size: 11px;
             padding: 4px 8px;
             cursor: pointer;
+            transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+        }
+
+        .chip:hover {
+            border-color: #93c5fd;
+        }
+
+        .chip.active {
+            background: var(--chip-active-bg);
+            border-color: var(--chip-active-line);
+            color: var(--chip-active-text);
+        }
+
+        .chip:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+
+        .router-preview {
+            min-height: 84px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #f8fafc;
+            color: #334155;
+            padding: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            margin-bottom: 8px;
+        }
+
+        .router-preview.empty {
+            color: #9ca3af;
         }
 
         .inline-actions {
@@ -345,6 +406,7 @@
             align-items: center;
             margin-top: 8px;
         }
+
         .review-controls {
             display: flex;
             gap: 8px;
@@ -352,11 +414,13 @@
             margin-top: 4px;
             margin-bottom: 8px;
         }
+
         .review-control {
             display: flex;
             align-items: center;
             gap: 6px;
         }
+
         #review-progress {
             margin-top: 8px;
             font-size: 12px;
@@ -546,9 +610,9 @@
 <body>
     <section id="top-deck" class="panel">
         <div class="section-title">
-            <span>Global Command</span>
+            <span data-i18n="sectionGlobalCommand">全局提问</span>
         </div>
-        <textarea id="global-input" placeholder="Enter a question to broadcast to multiple AI models"></textarea>
+        <textarea id="global-input" data-i18n-placeholder="globalInputPlaceholder" placeholder="输入一个问题，同时发给多个 AI 模型"></textarea>
         <input
             type="file"
             id="broadcast-file-input"
@@ -557,13 +621,13 @@
             style="display:none"
         >
         <div class="file-toolbar">
-            <button id="broadcast-attach-btn" class="btn btn-neutral btn-small">Add Files</button>
-            <button id="broadcast-clear-files-btn" class="btn btn-neutral btn-small">Clear Files</button>
+            <button id="broadcast-attach-btn" class="btn btn-neutral btn-small" data-i18n="broadcastAddFiles">添加文件</button>
+            <button id="broadcast-clear-files-btn" class="btn btn-neutral btn-small" data-i18n="broadcastClearFiles">清空文件</button>
         </div>
         <div id="broadcast-file-list" class="file-list">
-            <div class="empty">No files selected.</div>
+            <div class="empty" data-i18n="broadcastNoFilesSelected">尚未选择文件。</div>
         </div>
-        <div id="broadcast-file-status" class="file-status info">可以粘贴或拖拽文件到面板（最多3个，每个不超过5MB）。</div>
+        <div id="broadcast-file-status" class="file-status info" data-i18n="broadcastDropHint">可以粘贴或拖拽文件到这里，最多 3 个文件，每个不超过 5MB。</div>
         <div class="checkbox-row target-selector">
             <label class="checkbox-label"><input type="checkbox" value="ChatGPT" checked>ChatGPT</label>
             <label class="checkbox-label"><input type="checkbox" value="Claude" checked>Claude</label>
@@ -571,100 +635,120 @@
             <label class="checkbox-label"><input type="checkbox" value="Gemini" checked>Gemini</label>
             <label class="checkbox-label"><input type="checkbox" value="Doubao" checked>Doubao</label>
         </div>
-        <button id="broadcast-btn" class="btn btn-primary">Broadcast</button>
+        <button id="broadcast-btn" class="btn btn-primary" data-i18n="actionBroadcast">群发</button>
     </section>
 
     <section id="monitor-stream">
         <div class="ai-card" id="card-gpt">
             <div class="card-header">
                 <div class="model-name"><span class="status-dot"></span>ChatGPT</div>
-                <span class="status-text">Idle</span>
+                <span class="status-text" data-i18n="statusIdle">空闲</span>
             </div>
-            <div class="card-body">Waiting for response...</div>
+            <div class="card-body" data-i18n="waitingForResponse">等待响应...</div>
             <div class="card-actions">
-                <button class="btn btn-neutral btn-small btn-quote" data-source="ChatGPT">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="ChatGPT">加入候选</button>
+                <button class="btn btn-neutral btn-small btn-quote" data-source="ChatGPT" data-i18n="actionQuote">引用</button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="ChatGPT" data-i18n="actionAddCandidate">加入候选</button>
             </div>
         </div>
 
         <div class="ai-card" id="card-claude">
             <div class="card-header">
                 <div class="model-name"><span class="status-dot"></span>Claude</div>
-                <span class="status-text">Idle</span>
+                <span class="status-text" data-i18n="statusIdle">空闲</span>
             </div>
-            <div class="card-body">Waiting for response...</div>
+            <div class="card-body" data-i18n="waitingForResponse">等待响应...</div>
             <div class="card-actions">
-                <button class="btn btn-neutral btn-small btn-quote" data-source="Claude">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="Claude">加入候选</button>
+                <button class="btn btn-neutral btn-small btn-quote" data-source="Claude" data-i18n="actionQuote">引用</button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="Claude" data-i18n="actionAddCandidate">加入候选</button>
             </div>
         </div>
 
         <div class="ai-card" id="card-grok">
             <div class="card-header">
                 <div class="model-name"><span class="status-dot"></span>Grok</div>
-                <span class="status-text">Idle</span>
+                <span class="status-text" data-i18n="statusIdle">空闲</span>
             </div>
-            <div class="card-body">Waiting for response...</div>
+            <div class="card-body" data-i18n="waitingForResponse">等待响应...</div>
             <div class="card-actions">
-                <button class="btn btn-neutral btn-small btn-quote" data-source="Grok">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="Grok">加入候选</button>
+                <button class="btn btn-neutral btn-small btn-quote" data-source="Grok" data-i18n="actionQuote">引用</button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="Grok" data-i18n="actionAddCandidate">加入候选</button>
             </div>
         </div>
 
         <div class="ai-card" id="card-gemini">
             <div class="card-header">
                 <div class="model-name"><span class="status-dot"></span>Gemini</div>
-                <span class="status-text">Idle</span>
+                <span class="status-text" data-i18n="statusIdle">空闲</span>
             </div>
-            <div class="card-body">Waiting for response...</div>
+            <div class="card-body" data-i18n="waitingForResponse">等待响应...</div>
             <div class="card-actions">
-                <button class="btn btn-neutral btn-small btn-quote" data-source="Gemini">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="Gemini">加入候选</button>
+                <button class="btn btn-neutral btn-small btn-quote" data-source="Gemini" data-i18n="actionQuote">引用</button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="Gemini" data-i18n="actionAddCandidate">加入候选</button>
             </div>
         </div>
 
         <div class="ai-card" id="card-doubao">
             <div class="card-header">
                 <div class="model-name"><span class="status-dot"></span>Doubao</div>
-                <span class="status-text">Idle</span>
+                <span class="status-text" data-i18n="statusIdle">空闲</span>
             </div>
-            <div class="card-body">Waiting for response...</div>
+            <div class="card-body" data-i18n="waitingForResponse">等待响应...</div>
             <div class="card-actions">
-                <button class="btn btn-neutral btn-small btn-quote" data-source="Doubao">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="Doubao">加入候选</button>
+                <button class="btn btn-neutral btn-small btn-quote" data-source="Doubao" data-i18n="actionQuote">引用</button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="Doubao" data-i18n="actionAddCandidate">加入候选</button>
             </div>
         </div>
     </section>
 
     <section id="round-panel" class="panel">
         <div class="section-title">
-            <span>Round</span>
-            <button id="delete-round-btn" class="btn btn-danger btn-small">删除回合</button>
+            <span data-i18n="sectionRound">轮次</span>
+            <button id="delete-round-btn" class="btn btn-danger btn-small" data-i18n="actionDeleteRound">删除轮次</button>
         </div>
         <div id="round-meta">
-            <div class="meta-item"><span class="meta-label">ID</span><span id="round-id">-</span></div>
-            <div class="meta-item"><span class="meta-label">状态</span><span id="round-status">none</span></div>
-            <div class="meta-item"><span class="meta-label">候选</span><span id="round-candidate-count">0</span></div>
-            <div class="meta-item"><span class="meta-label">创建时间</span><span id="round-created-at">-</span></div>
+            <div class="meta-item"><span class="meta-label" data-i18n="roundLabelId">ID</span><span id="round-id">-</span></div>
+            <div class="meta-item"><span class="meta-label" data-i18n="roundLabelStatus">状态</span><span id="round-status">无</span></div>
+            <div class="meta-item"><span class="meta-label" data-i18n="roundLabelCandidates">候选</span><span id="round-candidate-count">0</span></div>
+            <div class="meta-item"><span class="meta-label" data-i18n="roundLabelCreatedAt">创建时间</span><span id="round-created-at">-</span></div>
         </div>
-        <div class="small-muted" id="round-question">当前未创建回合</div>
+        <div class="small-muted" id="round-question" data-i18n="roundNoActive">当前没有活动轮次。</div>
     </section>
 
     <section id="router-dock" class="panel">
         <div class="section-title">
-            <span>Router</span>
-            <button id="clear-quotes" class="btn btn-neutral btn-small">Clear Quotes</button>
+            <span data-i18n="sectionRouter">路由器</span>
+            <button id="clear-quotes" class="btn btn-neutral btn-small" data-i18n="actionClearQuotes">清空引用</button>
         </div>
         <div id="quote-list">
-            <div class="empty">点击“引用”把回答加入路由区</div>
+            <div class="empty" data-i18n="routerQuotesEmpty">点击“引用”把回答加入路由器。</div>
         </div>
-        <div class="chip-row">
-            <button class="chip" data-preset="red-teaming">找漏洞</button>
-            <button class="chip" data-preset="fact-check">核事实</button>
-            <button class="chip" data-preset="trade-off">看取舍</button>
-            <button class="chip" data-preset="execution">要落地</button>
+
+        <div class="router-group">
+            <div class="router-group-title" data-i18n="routerPrimaryGroup">主任务</div>
+            <div id="router-primary-presets" class="chip-row">
+                <button class="chip" data-preset-id="red-teaming" data-i18n="routerPresetLabelRedTeaming">找漏洞</button>
+                <button class="chip" data-preset-id="fact-check" data-i18n="routerPresetLabelFactCheck">核事实</button>
+                <button class="chip" data-preset-id="trade-off" data-i18n="routerPresetLabelTradeOff">看取舍</button>
+                <button class="chip" data-preset-id="decision" data-i18n="routerPresetLabelDecision">做决策</button>
+                <button class="chip" data-preset-id="merge-draft" data-i18n="routerPresetLabelMergeDraft">合并稿</button>
+            </div>
         </div>
-        <textarea id="router-input" placeholder="针对引用内容输入补充指令"></textarea>
+
+        <div class="router-group">
+            <div class="router-group-title" data-i18n="routerModifierGroup">修饰器</div>
+            <div id="router-modifier-presets" class="chip-row">
+                <button class="chip" data-preset-id="blind-spot" data-i18n="routerPresetLabelBlindSpot">补盲区</button>
+                <button class="chip" data-preset-id="key-questions" data-i18n="routerPresetLabelKeyQuestions">提问题</button>
+                <button class="chip" data-preset-id="execution" data-i18n="routerPresetLabelExecution">要落地</button>
+            </div>
+        </div>
+
+        <div class="small-muted" data-i18n="routerGeneratedLabel">系统生成指令</div>
+        <div id="router-preview" class="router-preview empty" data-i18n="routerGeneratedEmpty">先选择一个主任务，再按需叠加修饰器。</div>
+
+        <div class="small-muted" data-i18n="routerSupplementLabel">补充要求</div>
+        <textarea id="router-input" data-i18n-placeholder="routerSupplementPlaceholder" placeholder="补充你的上下文、范围或偏好要求"></textarea>
+
         <div class="checkbox-row router-targets">
             <label class="checkbox-label"><input type="checkbox" value="ChatGPT">ChatGPT</label>
             <label class="checkbox-label"><input type="checkbox" value="Claude">Claude</label>
@@ -672,33 +756,33 @@
             <label class="checkbox-label"><input type="checkbox" value="Gemini">Gemini</label>
             <label class="checkbox-label"><input type="checkbox" value="Doubao">Doubao</label>
         </div>
-        <button id="route-btn" class="btn btn-neutral">Route</button>
+        <button id="route-btn" class="btn btn-neutral" data-i18n="actionRoute">开始路由</button>
     </section>
 
     <section id="review-panel" class="panel">
         <div class="section-title">
-            <span>Review</span>
-            <button id="reset-template-btn" class="btn btn-neutral btn-small">恢复模板</button>
+            <span data-i18n="sectionReview">评审</span>
+            <button id="reset-template-btn" class="btn btn-neutral btn-small" data-i18n="actionResetTemplate">恢复模板</button>
         </div>
 
         <div class="review-controls">
             <label class="review-control" for="review-mode">
-                <span class="small-muted">模式</span>
+                <span class="small-muted" data-i18n="reviewModeLabel">模式</span>
                 <select id="review-mode">
-                    <option value="scoring">评分审议</option>
-                    <option value="discussion">讨论审议</option>
+                    <option value="scoring" data-i18n="reviewModeScoring">评分评审</option>
+                    <option value="discussion" data-i18n="reviewModeDiscussion">讨论评审</option>
                 </select>
             </label>
             <label class="review-control" for="label-mode">
-                <span class="small-muted">标签</span>
+                <span class="small-muted" data-i18n="labelModeLabel">标签</span>
                 <select id="label-mode">
-                    <option value="blind">匿名(A/B/C/D)</option>
-                    <option value="named">真实名称</option>
+                    <option value="blind" data-i18n="labelModeBlind">匿名（A/B/C/D）</option>
+                    <option value="named" data-i18n="labelModeNamed">真实模型名</option>
                 </select>
             </label>
         </div>
 
-        <div class="small-muted">评委模型</div>
+        <div class="small-muted" data-i18n="judgeModelsLabel">评委模型</div>
         <div class="checkbox-row judge-targets">
             <label class="checkbox-label"><input type="checkbox" value="ChatGPT" checked>ChatGPT</label>
             <label class="checkbox-label"><input type="checkbox" value="Claude" checked>Claude</label>
@@ -707,22 +791,19 @@
             <label class="checkbox-label"><input type="checkbox" value="Doubao">Doubao</label>
         </div>
 
-        <textarea id="review-template" placeholder="审议模板（支持 {{question}} 和 {{answers}}）"></textarea>
+        <textarea id="review-template" data-i18n-placeholder="reviewTemplatePlaceholderScoring" placeholder="评分模板（支持 {{question}} 和 {{answers}}）"></textarea>
         <div class="inline-actions">
-            <button id="start-review-btn" class="btn btn-primary">开始评分审议</button>
+            <button id="start-review-btn" class="btn btn-primary" data-i18n="actionStartScoringReview">开始评分评审</button>
         </div>
-        <div id="review-progress">等待开始审议</div>
+        <div id="review-progress" data-i18n="reviewProgressWaiting">等待开始评审。</div>
         <div id="judge-status-list">
-            <div class="empty">No judge tasks yet</div>
+            <div class="empty" data-i18n="judgeTasksEmpty">还没有评委任务。</div>
         </div>
         <div id="result-board">
-            <div class="empty">暂无结果</div>
+            <div class="empty" data-i18n="resultsEmpty">暂无结果。</div>
         </div>
     </section>
 
     <script type="module" src="panel.js"></script>
 </body>
 </html>
-
-
-

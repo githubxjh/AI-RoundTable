@@ -83,6 +83,54 @@ export const DEFAULT_SETTINGS = {
     labelMode: 'blind'
 };
 
+const LEGACY_REVIEW_TEMPLATE = [
+    'You are a neutral and rigorous evaluator.',
+    'Question:',
+    '{{question}}',
+    '',
+    'Evaluate the following anonymized answers:',
+    '{{answers}}',
+    '',
+    'Scoring dimensions (1-10 each): accuracy, completeness, actionability, clarity.',
+    'overall = accuracy*0.4 + completeness*0.25 + actionability*0.2 + clarity*0.15',
+    '',
+    'Output one JSON object wrapped with tags:',
+    '<EVAL_JSON>{...}</EVAL_JSON>',
+    '',
+    'JSON schema:',
+    '{',
+    '  "scores": [',
+    '    {',
+    '      "slot": "A",',
+    '      "accuracy": 8,',
+    '      "completeness": 7,',
+    '      "actionability": 8,',
+    '      "clarity": 9,',
+    '      "overall": 8.0,',
+    '      "reason": "short reason",',
+    '      "evidence": ["point1", "point2"]',
+    '    }',
+    '  ]',
+    '}',
+    'Do not output markdown or any text outside <EVAL_JSON> tags.'
+].join('\n');
+
+const LEGACY_DISCUSSION_TEMPLATE = [
+    'You are participating in an AI roundtable discussion.',
+    'Question:',
+    '{{question}}',
+    '',
+    'Here are candidate responses from different AIs:',
+    '{{answers}}',
+    '',
+    'Please provide:',
+    '1) your best consolidated answer,',
+    '2) what is still unclear or contested,',
+    '3) up to 3 follow-up questions that could move the discussion forward.',
+    '',
+    'No scoring is required. No JSON is required. Reply in natural language.'
+].join('\n');
+
 function mergeSettings(partial = {}) {
     const merged = {
         ...DEFAULT_SETTINGS,
@@ -92,7 +140,48 @@ function mergeSettings(partial = {}) {
             ...(partial.weights || {})
         }
     };
+
+    merged.reviewPromptTemplate = normalizeTemplateSetting(
+        merged.reviewPromptTemplate,
+        DEFAULT_SETTINGS.reviewPromptTemplate,
+        LEGACY_REVIEW_TEMPLATE
+    );
+    merged.discussionPromptTemplate = normalizeTemplateSetting(
+        merged.discussionPromptTemplate,
+        DEFAULT_SETTINGS.discussionPromptTemplate,
+        LEGACY_DISCUSSION_TEMPLATE
+    );
+
     return merged;
+}
+
+function normalizeTemplateSetting(template, defaultTemplate, legacyTemplate) {
+    const current = String(template || '').trim();
+    if (!current) {
+        return defaultTemplate;
+    }
+
+    if (current === legacyTemplate || looksLikeTemplateCorruption(current)) {
+        return defaultTemplate;
+    }
+
+    return current;
+}
+
+function looksLikeTemplateCorruption(template) {
+    return [
+        '<button id="start-review-btn"',
+        '<div id="review-progress">',
+        '<div id="result-board">',
+        '?/button>',
+        '?/div>',
+        '?/span>',
+        '浣犳',
+        '闂',
+        '璇峰',
+        '鍙',
+        '涓嶈'
+    ].some((fragment) => template.includes(fragment));
 }
 
 export const Storage = {

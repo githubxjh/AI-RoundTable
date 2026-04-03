@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "AI RoundTable",
+  "default_locale": "zh_CN",
+  "name": "__MSG_extName__",
   "version": "1.1",
-  "description": "Turn your browser into a multi-model boardroom.",
+  "description": "__MSG_extDescription__",
   "permissions": [
     "sidePanel",
     "tabs",

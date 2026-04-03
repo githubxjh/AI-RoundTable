@@ -1,4 +1,21 @@
-import { DEFAULT_SETTINGS, getRtSettings, saveRtSettings } from '../utils/storage.js';
+import {
+    DEFAULT_SETTINGS,
+    RT_KEYS,
+    Storage,
+    getRtSettings,
+    saveRtSettings
+} from '../utils/storage.js';
+import { applyI18n, t } from './i18n.mjs';
+import {
+    MAX_ROUTER_MODIFIERS,
+    applyPresetSelection,
+    buildFinalRouterPrompt,
+    buildRouterInstruction,
+    createEmptyRouterPresetState,
+    getPresetById
+} from './router_presets.mjs';
+
+const MODELS = ['ChatGPT', 'Claude', 'Grok', 'Gemini', 'Doubao'];
 
 const MODEL_CARD_MAP = {
     ChatGPT: 'card-gpt',
@@ -6,30 +23,6 @@ const MODEL_CARD_MAP = {
     Grok: 'card-grok',
     Gemini: 'card-gemini',
     Doubao: 'card-doubao'
-};
-
-const FIXED_WEIGHTS = {
-    accuracy: 0.4,
-    completeness: 0.25,
-    actionability: 0.2,
-    clarity: 0.15
-};
-
-const REVIEW_MODES = {
-    scoring: 'scoring',
-    discussion: 'discussion'
-};
-
-const LABEL_MODES = {
-    blind: 'blind',
-    named: 'named'
-};
-
-const PRESETS = {
-    'red-teaming': 'Act as a strict reviewer and point out the largest risks and flaws in the proposal.',
-    'fact-check': 'Fact-check the statements above and identify any uncertain, outdated, or unsupported claims.',
-    'trade-off': 'Analyze trade-offs: benefits, opportunity cost, constraints, and side effects.',
-    'execution': 'Turn this idea into an executable plan with steps, owners, and timeline.'
 };
 
 const BROADCAST_MAX_FILES = 3;
@@ -67,40 +60,94 @@ const BROADCAST_EXT_TO_MIME = {
     '.csv': 'text/csv'
 };
 
+const REVIEW_MODES = {
+    scoring: 'scoring',
+    discussion: 'discussion'
+};
+
+const LABEL_MODES = {
+    blind: 'blind',
+    named: 'named'
+};
+
+const FIXED_WEIGHTS = {
+    accuracy: 0.4,
+    completeness: 0.25,
+    actionability: 0.2,
+    clarity: 0.15
+};
+
 const state = {
+    modelState: {},
     quoteList: [],
     activeRoundId: null,
     activeRound: null,
     settings: { ...DEFAULT_SETTINGS },
-    latestReviewProgress: null,
     selectedCandidateId: null,
     broadcastFiles: [],
     broadcastStatus: {
         level: 'info',
-        message: 'You can paste or drag files here (max 3 files, 5MB each).'
+        message: ''
     },
+    generatedRouterInstruction: '',
+    routerSupplement: '',
     dragDepth: 0,
     reviewMode: REVIEW_MODES.scoring,
     labelMode: LABEL_MODES.blind,
-    isStartingReview: false
+    isStartingReview: false,
+    ...createEmptyRouterPresetState()
 };
 
 const refs = {};
 
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', () => {
+    void bootstrapPanel();
+});
+
+async function bootstrapPanel() {
+    setPanelAutomationState('pending');
+    try {
+        await initializePanel();
+        setPanelAutomationState('ready');
+    } catch (error) {
+        console.error('initializePanel failed', error);
+        setPanelAutomationState('error', error);
+    }
+}
+
+function setPanelAutomationState(status, error = null) {
+    const normalized = status === 'ready'
+        ? 'true'
+        : status === 'error'
+            ? 'error'
+            : 'pending';
+
+    document.body.dataset.panelReady = normalized;
+    globalThis.__AI_RT_PANEL_READY__ = normalized === 'true';
+    globalThis.__AI_RT_PANEL_STATUS__ = normalized;
+    globalThis.__AI_RT_PANEL_ERROR__ = error
+        ? String(error instanceof Error ? error.message : error || '')
+        : '';
+}
+
+async function initializePanel() {
     bindRefs();
+    applyI18n(document);
+    document.title = t('panelTitle', 'AI RoundTable');
+    initializeSelectorDefaults();
     bindEvents();
     await initializeSettings();
+    await loadModelState();
     await loadLatestRound();
+    setBroadcastStatus('info', t('broadcastDropHint', '可以粘贴或拖拽文件到这里，最多 3 个文件，每个不超过 5MB。'));
     renderBroadcastFileList();
-    renderBroadcastStatus();
     renderQuoteList();
-    updateRouteExclusions();
+    refreshRouterComposer();
     renderRound();
     renderReviewProgress();
     renderJudgeStatusList();
     renderResultBoard();
-});
+}
 
 function bindRefs() {
     refs.globalInput = document.getElementById('global-input');
@@ -112,6 +159,7 @@ function bindRefs() {
     refs.broadcastBtn = document.getElementById('broadcast-btn');
     refs.quoteList = document.getElementById('quote-list');
     refs.clearQuotesBtn = document.getElementById('clear-quotes');
+    refs.routerPreview = document.getElementById('router-preview');
     refs.routerInput = document.getElementById('router-input');
     refs.routeBtn = document.getElementById('route-btn');
     refs.reviewMode = document.getElementById('review-mode');
@@ -130,134 +178,197 @@ function bindRefs() {
     refs.deleteRoundBtn = document.getElementById('delete-round-btn');
 }
 
+function initializeSelectorDefaults() {
+    getRouteTargetCheckboxes().forEach((checkbox) => {
+        checkbox.checked = true;
+    });
+}
+
 function bindEvents() {
-    refs.broadcastBtn.addEventListener('click', onBroadcast);
+    refs.broadcastBtn?.addEventListener('click', () => { void onBroadcast(); });
     refs.broadcastAttachBtn?.addEventListener('click', onBroadcastAttachClick);
     refs.broadcastClearFilesBtn?.addEventListener('click', onClearBroadcastFiles);
     refs.broadcastFileInput?.addEventListener('change', onSelectBroadcastFiles);
+    refs.routerInput?.addEventListener('input', onRouterSupplementInput);
+    refs.clearQuotesBtn?.addEventListener('click', onClearQuotes);
+    refs.routeBtn?.addEventListener('click', () => { void onRoute(); });
+    refs.resetTemplateBtn?.addEventListener('click', () => { void onResetTemplate(); });
+    refs.startReviewBtn?.addEventListener('click', () => { void onStartReview(); });
+    refs.deleteRoundBtn?.addEventListener('click', () => { void onDeleteRound(); });
+    refs.reviewMode?.addEventListener('change', () => { void onReviewModeChange(); });
+    refs.labelMode?.addEventListener('change', () => { void onLabelModeChange(); });
+    refs.reviewTemplate?.addEventListener('change', () => { void persistCurrentTemplate(); });
+    getRouteTargetCheckboxes().forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+            refreshRouterComposer();
+        });
+    });
     document.body.addEventListener('paste', onPanelPaste);
     document.body.addEventListener('dragenter', onPanelDragEnter);
     document.body.addEventListener('dragover', onPanelDragOver);
     document.body.addEventListener('dragleave', onPanelDragLeave);
     document.body.addEventListener('drop', onPanelDrop);
-    refs.clearQuotesBtn.addEventListener('click', onClearQuotes);
-    refs.routeBtn.addEventListener('click', onRoute);
-    refs.resetTemplateBtn.addEventListener('click', onResetTemplate);
-    refs.startReviewBtn.addEventListener('click', onStartReview);
-    refs.deleteRoundBtn.addEventListener('click', onDeleteRound);
-    refs.reviewMode?.addEventListener('change', () => onReviewModeChange().catch(console.error));
-    refs.labelMode?.addEventListener('change', () => onLabelModeChange().catch(console.error));
-
-    refs.reviewTemplate.addEventListener('change', () => {
-        persistCurrentTemplate().catch(console.error);
-    });
-
-    document.addEventListener('click', (event) => {
-        const target = event.target;
-
-        if (target.classList.contains('btn-quote')) {
-            const source = target.dataset.source;
-            const card = target.closest('.ai-card');
-            const bodyText = card?.querySelector('.card-body')?.innerText || '';
-            addQuote(source, bodyText);
-            return;
-        }
-
-        if (target.classList.contains('btn-candidate')) {
-            const model = target.dataset.model;
-            onAddCandidate(model);
-            return;
-        }
-
-        if (target.classList.contains('quote-close')) {
-            const index = Number(target.closest('.quote-item')?.dataset.index);
-            removeQuote(index);
-            return;
-        }
-
-        if (target.classList.contains('chip')) {
-            const presetKey = target.dataset.preset;
-            if (PRESETS[presetKey]) {
-                refs.routerInput.value = PRESETS[presetKey];
-                refs.routerInput.focus();
-            }
-            return;
-        }
-
-        const rankRow = target.closest('.rank-row[data-candidate-id]');
-        if (rankRow && refs.resultBoard?.contains(rankRow)) {
-            onToggleCandidateDetails(rankRow.dataset.candidateId || '');
-            return;
-        }
-
-        const header = target.closest('.card-header');
-        if (header) {
-            const card = header.closest('.ai-card');
-            const model = getModelFromCard(card?.id);
-            if (model) {
-                sendMessage({ type: 'ACTIVATE_TAB', model }).catch(console.error);
-            }
-        }
-    });
-
+    document.addEventListener('click', onDocumentClick);
     chrome.runtime.onMessage.addListener((message) => {
-        if (!message || !message.type) return;
-        if (message.type === 'STATUS_UPDATE') {
-            updateCard(message.model, message.status, message.summary);
-            return;
-        }
-        if (message.type === 'ROUND_EVENT') {
-            onRoundEvent(message);
-        }
+        void handleRuntimeMessage(message);
     });
+}
+
+async function handleRuntimeMessage(message) {
+    if (!message || !message.type) return;
+    if (message.type === 'STATUS_UPDATE') {
+        updateCard(message.model, message.status, message.summary);
+        return;
+    }
+    if (message.type !== 'ROUND_EVENT') return;
+    if (!state.activeRoundId) {
+        await loadLatestRound();
+        return;
+    }
+    if (message.roundId === state.activeRoundId) {
+        await loadRound(state.activeRoundId);
+        return;
+    }
+    if (message.event === 'round_deleted' || message.event === 'candidate_added') {
+        await loadLatestRound();
+    }
+}
+
+function onDocumentClick(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    if (target.classList.contains('btn-quote')) {
+        const source = target.dataset.source || '';
+        const card = target.closest('.ai-card');
+        const bodyText = card?.querySelector('.card-body')?.textContent || '';
+        addQuote(source, bodyText);
+        return;
+    }
+
+    if (target.classList.contains('btn-candidate')) {
+        void onAddCandidate(target.dataset.model || '');
+        return;
+    }
+
+    if (target.classList.contains('quote-close')) {
+        const index = Number(target.closest('.quote-item')?.dataset.index);
+        if (Number.isFinite(index)) {
+            removeQuote(index);
+        }
+        return;
+    }
+
+    if (target.classList.contains('chip') && target.dataset.presetId) {
+        onToggleRouterPreset(target.dataset.presetId);
+        return;
+    }
+
+    const rankRow = target.closest('.rank-row[data-candidate-id]');
+    if (rankRow && refs.resultBoard?.contains(rankRow)) {
+        onToggleCandidateDetails(rankRow.dataset.candidateId || '');
+        return;
+    }
+
+    const header = target.closest('.card-header');
+    if (header) {
+        const card = header.closest('.ai-card');
+        const model = getModelFromCard(card?.id || '');
+        if (model) {
+            void sendMessage({ type: 'ACTIVATE_TAB', model });
+        }
+    }
 }
 
 async function initializeSettings() {
     try {
         state.settings = await getRtSettings();
     } catch (error) {
-        console.warn('Failed to load settings, using defaults', error);
+        console.warn('Failed to load settings, using defaults.', error);
         state.settings = { ...DEFAULT_SETTINGS };
-    }
-
-    const currentTemplate = String(state.settings.reviewPromptTemplate || '');
-    // Backward compatibility + self-heal: migrate old template or reset if HTML fragment polluted this field.
-    const shouldResetTemplate =
-        currentTemplate.includes('<button id="start-review-btn"')
-        || currentTemplate.includes('<div id="review-progress">')
-        || currentTemplate.includes('<div id="result-board">')
-        || currentTemplate.includes('?/button>')
-        || currentTemplate.includes('?/div>')
-        || currentTemplate.includes('?/span>');
-
-    if (shouldResetTemplate) {
-        state.settings.reviewPromptTemplate = DEFAULT_SETTINGS.reviewPromptTemplate;
-        saveRtSettings({ reviewPromptTemplate: DEFAULT_SETTINGS.reviewPromptTemplate }).catch(console.error);
-    }
-
-    const currentDiscussionTemplate = String(state.settings.discussionPromptTemplate || '');
-    const shouldResetDiscussionTemplate =
-        currentDiscussionTemplate.includes('<button id="start-review-btn"')
-        || currentDiscussionTemplate.includes('<div id="review-progress">')
-        || currentDiscussionTemplate.includes('<div id="result-board">')
-        || currentDiscussionTemplate.includes('?/button>')
-        || currentDiscussionTemplate.includes('?/div>')
-        || currentDiscussionTemplate.includes('?/span>');
-
-    if (shouldResetDiscussionTemplate) {
-        state.settings.discussionPromptTemplate = DEFAULT_SETTINGS.discussionPromptTemplate;
-        saveRtSettings({ discussionPromptTemplate: DEFAULT_SETTINGS.discussionPromptTemplate }).catch(console.error);
     }
 
     state.reviewMode = normalizeReviewMode(state.settings.reviewMode);
     state.labelMode = normalizeLabelMode(state.settings.labelMode);
-
-    if (refs.reviewMode) refs.reviewMode.value = state.reviewMode;
-    if (refs.labelMode) refs.labelMode.value = state.labelMode;
-
+    state.routerSupplement = '';
+    refs.reviewMode.value = state.reviewMode;
+    refs.labelMode.value = state.labelMode;
+    refs.routerInput.value = state.routerSupplement;
     refreshTemplateEditorForCurrentMode();
     updateReviewModeUI();
     syncReviewControlsState();
+}
+
+async function loadModelState() {
+    const data = await Storage.get(RT_KEYS.modelState);
+    state.modelState = data[RT_KEYS.modelState] || {};
+    renderCards();
+}
+
+async function loadLatestRound() {
+    const response = await sendMessage({ type: 'ROUND_LIST', limit: 1 });
+    const latest = response?.status === 'ok' && Array.isArray(response.rounds) ? response.rounds[0] : null;
+    if (!latest?.roundId) {
+        clearActiveRound();
+        return;
+    }
+    await loadRound(latest.roundId);
+}
+
+async function loadRound(roundId) {
+    if (!roundId) {
+        clearActiveRound();
+        return;
+    }
+
+    const response = await sendMessage({ type: 'ROUND_GET', roundId });
+    if (response?.status !== 'ok' || !response.round) {
+        clearActiveRound();
+        return;
+    }
+
+    state.activeRoundId = roundId;
+    state.activeRound = response.round;
+
+    const candidateIds = new Set((state.activeRound.candidates || []).map((candidate) => candidate.candidateId));
+    if (!candidateIds.has(state.selectedCandidateId)) {
+        state.selectedCandidateId = state.activeRound.ranking?.[0]?.candidateId || null;
+    }
+
+    renderRound();
+    syncReviewControlsState();
+    renderReviewProgress();
+    renderJudgeStatusList();
+    renderResultBoard();
+}
+
+function clearActiveRound() {
+    state.activeRoundId = null;
+    state.activeRound = null;
+    state.selectedCandidateId = null;
+    renderRound();
+    syncReviewControlsState();
+    renderReviewProgress();
+    renderJudgeStatusList();
+    renderResultBoard();
+}
+
+function getCurrentReviewMode() {
+    return normalizeReviewMode(refs.reviewMode?.value || state.reviewMode);
+}
+
+function getCurrentLabelMode() {
+    return normalizeLabelMode(refs.labelMode?.value || state.labelMode);
+}
+
+function getTemplateKeyByMode(mode) {
+    return normalizeReviewMode(mode) === REVIEW_MODES.discussion ? 'discussionPromptTemplate' : 'reviewPromptTemplate';
+}
+
+function getDefaultTemplateByMode(mode) {
+    return normalizeReviewMode(mode) === REVIEW_MODES.discussion
+        ? DEFAULT_SETTINGS.discussionPromptTemplate
+        : DEFAULT_SETTINGS.reviewPromptTemplate;
 }
 
 function normalizeReviewMode(value) {
@@ -272,65 +383,741 @@ function normalizeLabelMode(value) {
         : LABEL_MODES.blind;
 }
 
-function getTemplateKeyByMode(mode) {
-    return normalizeReviewMode(mode) === REVIEW_MODES.discussion ? 'discussionPromptTemplate' : 'reviewPromptTemplate';
+function getBroadcastTargets() {
+    return getCheckedValues('.target-selector input[type="checkbox"]');
 }
 
-function getDefaultTemplateByMode(mode) {
-    return normalizeReviewMode(mode) === REVIEW_MODES.discussion
-        ? DEFAULT_SETTINGS.discussionPromptTemplate
-        : DEFAULT_SETTINGS.reviewPromptTemplate;
+function getRouteTargets() {
+    return getCheckedValues('.router-targets input[type="checkbox"]');
 }
 
-function getCurrentReviewMode() {
-    return normalizeReviewMode(refs.reviewMode?.value || state.reviewMode);
+function getJudgeModels() {
+    return getCheckedValues('.judge-targets input[type="checkbox"]');
 }
 
-function getCurrentLabelMode() {
-    return normalizeLabelMode(refs.labelMode?.value || state.labelMode);
+function getRouteTargetCheckboxes() {
+    return Array.from(document.querySelectorAll('.router-targets input[type="checkbox"]'));
 }
 
-function updateReviewModeUI() {
+function getCheckedValues(selector) {
+    return Array.from(document.querySelectorAll(selector))
+        .filter((input) => input instanceof HTMLInputElement && input.checked && !input.disabled)
+        .map((input) => input.value)
+        .filter((value) => MODELS.includes(value));
+}
+
+function getModelFromCard(cardId) {
+    return Object.entries(MODEL_CARD_MAP).find(([, id]) => id === cardId)?.[0] || null;
+}
+
+function formatDateTime(value) {
+    if (!value) return '—';
+    const date = new Date(Number(value));
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function formatScore(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '0.00';
+    return numeric.toFixed(2);
+}
+
+function formatFileSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${bytes} B`;
+}
+
+function truncateText(text, maxLength) {
+    const value = String(text || '').trim();
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function localizeBackgroundError(response) {
+    const code = String(response?.code || '').trim();
+    switch (code) {
+        case 'candidate_summary_missing':
+            return t('candidateSummaryMissing', '当前模型还没有捕获到可用回答，请等它输出完成后再试。');
+        case 'round_not_found':
+            return t('candidateRoundNotFound', '所选轮次不存在，请刷新后重试。');
+        case 'invalid_request':
+            return t('candidateInvalidRequest', '加入候选时请求无效。');
+        case 'candidate_answer_missing':
+            return t('reviewNoCandidateAnswer', '当前轮次还没有可用候选答案，请先加入候选。');
+        case 'broadcast_no_supported_targets':
+            return t('broadcastNoSupportedTargets', '所选模型都不支持当前附件。');
+        case 'invalid_attachments':
+            return t('invalidAttachments', '附件数据无效，请重新选择文件。');
+        default:
+            return String(response?.message || response?.error || '').trim();
+    }
+}
+
+async function sendMessage(payload) {
+    try {
+        return await chrome.runtime.sendMessage(payload);
+    } catch (error) {
+        console.error('sendMessage failed', error);
+        return {
+            status: 'error',
+            message: error instanceof Error ? error.message : String(error || 'Unknown error')
+        };
+    }
+}
+
+async function onBroadcast() {
+    const question = String(refs.globalInput?.value || '').trim();
+    if (!question) {
+        window.alert(t('broadcastEnterQuestion', '请先输入问题再进行群发。'));
+        return;
+    }
+
+    const targets = getBroadcastTargets();
+    if (targets.length === 0) {
+        window.alert(t('broadcastSelectTargetModel', '请至少选择一个目标模型。'));
+        return;
+    }
+
+    const attachments = await serializeBroadcastFiles();
+    setBroadcastStatus('info', t('broadcasting', '群发中...'));
+
+    const response = await sendMessage({
+        type: 'BROADCAST',
+        text: question,
+        targets,
+        attachments
+    });
+
+    if (response?.status === 'error') {
+        const localizedError = localizeBackgroundError(response)
+            || t('broadcastFailedGeneric', '群发失败，请稍后重试。');
+        setBroadcastStatus('error', t('broadcastFailedPrefix', '群发失败：{0}', [localizedError]));
+        return;
+    }
+
+    const sentModels = Array.isArray(response?.sentModels) ? response.sentModels : [];
+    const degraded = Array.isArray(response?.degraded) ? response.degraded : [];
+    const skipped = Array.isArray(response?.skipped) ? response.skipped : [];
+    const failed = Array.isArray(response?.failed) ? response.failed : [];
+
+    const lines = [
+        t('broadcastOutcomeSent', '已发送 {0} 个模型。', [sentModels.length])
+    ];
+    if (degraded.length > 0) {
+        lines.push(t('broadcastOutcomeDegraded', '{0} 个模型已降级为纯文本发送（{1}）。', [
+            degraded.length,
+            summarizeBroadcastIssues(degraded)
+        ]));
+    }
+    if (skipped.length > 0) {
+        lines.push(t('broadcastOutcomeSkipped', '已跳过 {0} 个模型（{1}）。', [
+            skipped.length,
+            summarizeBroadcastIssues(skipped)
+        ]));
+    }
+    if (failed.length > 0) {
+        lines.push(t('broadcastOutcomeFailed', '{0} 个模型发送失败（{1}）。', [
+            failed.length,
+            summarizeBroadcastIssues(failed)
+        ]));
+    }
+
+    setBroadcastStatus(failed.length > 0 ? 'warn' : 'success', lines.join('\n'));
+
+    if (sentModels.length > 0) {
+        await createFreshRound(question, sentModels.length > 0 ? sentModels : targets);
+    }
+}
+
+async function createFreshRound(question, targetModels) {
+    const response = await sendMessage({
+        type: 'ROUND_CREATE',
+        question,
+        targetModels
+    });
+    if (response?.status === 'round_created' && response.roundId) {
+        await loadRound(response.roundId);
+    }
+}
+
+function summarizeBroadcastIssues(items) {
+    return items
+        .map((item) => {
+            const model = String(item?.model || '').trim();
+            const reason = String(item?.reason || '').trim();
+            return reason ? `${model}: ${reason}` : model;
+        })
+        .filter(Boolean)
+        .join('；');
+}
+
+async function serializeBroadcastFiles() {
+    const attachments = [];
+    for (const file of state.broadcastFiles) {
+        attachments.push(await serializeFile(file));
+    }
+    return attachments;
+}
+
+async function serializeFile(file) {
+    const dataUrl = await readFileAsDataUrl(file);
+    return {
+        name: file.name,
+        mimeType: String(file.type || BROADCAST_EXT_TO_MIME[getFileExtension(file.name)] || ''),
+        size: file.size,
+        base64: dataUrl.split(',')[1] || ''
+    };
+}
+
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('File read failed'));
+        reader.readAsDataURL(file);
+    });
+}
+
+function onBroadcastAttachClick() {
+    refs.broadcastFileInput?.click();
+}
+
+function onClearBroadcastFiles() {
+    state.broadcastFiles = [];
+    renderBroadcastFileList();
+    setBroadcastStatus('info', t('attachmentsCleared', '已清空附件。'));
+}
+
+function onSelectBroadcastFiles(event) {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    addIncomingFiles(input.files, t('sourceSelectedFiles', '选中文件'));
+    input.value = '';
+}
+
+function onPanelPaste(event) {
+    const files = event.clipboardData?.files;
+    if (!files || files.length === 0) {
+        return;
+    }
+    event.preventDefault();
+    addIncomingFiles(files, t('sourcePastedFiles', '粘贴文件'));
+}
+
+function onPanelDragEnter(event) {
+    if (!hasFilePayload(event.dataTransfer)) return;
+    event.preventDefault();
+    state.dragDepth += 1;
+    document.body.classList.add('drag-active');
+}
+
+function onPanelDragOver(event) {
+    if (!hasFilePayload(event.dataTransfer)) return;
+    event.preventDefault();
+}
+
+function onPanelDragLeave(event) {
+    if (!hasFilePayload(event.dataTransfer)) return;
+    event.preventDefault();
+    state.dragDepth = Math.max(0, state.dragDepth - 1);
+    if (state.dragDepth === 0) {
+        document.body.classList.remove('drag-active');
+    }
+}
+
+function onPanelDrop(event) {
+    if (!hasFilePayload(event.dataTransfer)) return;
+    event.preventDefault();
+    state.dragDepth = 0;
+    document.body.classList.remove('drag-active');
+    addIncomingFiles(event.dataTransfer?.files, t('sourceDroppedFiles', '拖拽文件'));
+}
+
+function hasFilePayload(dataTransfer) {
+    const types = Array.from(dataTransfer?.types || []);
+    return types.includes('Files');
+}
+
+function addIncomingFiles(fileList, sourceLabel) {
+    const incomingFiles = Array.from(fileList || []).filter((item) => item instanceof File);
+    if (incomingFiles.length === 0) {
+        setBroadcastStatus('warn', t('noUsableFilesDetected', '{0}：未检测到可用文件。', [sourceLabel]));
+        return;
+    }
+
+    const existingKeys = new Set(state.broadcastFiles.map((file) => getFileKey(file)));
+    const accepted = [];
+    const duplicates = [];
+    const typeRejected = [];
+    const sizeRejected = [];
+    let overflow = 0;
+
+    incomingFiles.forEach((file) => {
+        if (!isSupportedFile(file)) {
+            typeRejected.push(file);
+            return;
+        }
+        if (file.size > BROADCAST_MAX_FILE_BYTES) {
+            sizeRejected.push(file);
+            return;
+        }
+        const key = getFileKey(file);
+        if (existingKeys.has(key)) {
+            duplicates.push(file);
+            return;
+        }
+        if (state.broadcastFiles.length + accepted.length >= BROADCAST_MAX_FILES) {
+            overflow += 1;
+            return;
+        }
+        existingKeys.add(key);
+        accepted.push(file);
+    });
+
+    let duplicateKeptCount = 0;
+    let duplicateSkippedCount = duplicates.length;
+    if (duplicates.length > 0 && window.confirm(t('duplicateFilesConfirm', '检测到 {0} 个重复文件，仍然保留吗？', [duplicates.length]))) {
+        duplicateKeptCount = duplicates.length;
+        duplicateSkippedCount = 0;
+        duplicates.forEach((file) => {
+            if (state.broadcastFiles.length + accepted.length >= BROADCAST_MAX_FILES) {
+                overflow += 1;
+                return;
+            }
+            accepted.push(file);
+        });
+    }
+
+    state.broadcastFiles = [...state.broadcastFiles, ...accepted];
+    renderBroadcastFileList();
+
+    const lines = [];
+    if (accepted.length > 0) {
+        lines.push(t('fileActionAdded', '已加入 {0} 个文件。', [accepted.length]));
+    }
+    if (duplicateKeptCount > 0) {
+        lines.push(t('fileActionDuplicateKept', '重复文件已保留：{0} 个。', [duplicateKeptCount]));
+    }
+    if (duplicateSkippedCount > 0) {
+        lines.push(t('fileActionDuplicateSkipped', '重复文件已跳过：{0} 个。', [duplicateSkippedCount]));
+    }
+    if (typeRejected.length > 0) {
+        lines.push(t('fileActionTypeRejected', '类型不支持：{0} 个。', [typeRejected.length]));
+    }
+    if (sizeRejected.length > 0) {
+        lines.push(t('fileActionSizeRejected', '大小不符合限制：{0} 个。', [sizeRejected.length]));
+    }
+    if (overflow > 0) {
+        lines.push(t('fileActionOverflow', '超出数量上限（最多 {0} 个）：{1} 个。', [
+            BROADCAST_MAX_FILES,
+            overflow
+        ]));
+    }
+
+    if (lines.length === 0) {
+        setBroadcastStatus('warn', t('filesNotQueued', '{0}未加入待发送队列。', [sourceLabel]));
+        return;
+    }
+
+    const level = typeRejected.length > 0 || sizeRejected.length > 0 || overflow > 0 ? 'warn' : 'success';
+    setBroadcastStatus(level, lines.join('\n'));
+}
+
+function isSupportedFile(file) {
+    const mimeType = String(file.type || '').toLowerCase();
+    const extension = getFileExtension(file.name);
+    return BROADCAST_ALLOWED_MIME.has(mimeType) || BROADCAST_ALLOWED_EXT.has(extension);
+}
+
+function getFileExtension(name) {
+    const value = String(name || '').toLowerCase();
+    const index = value.lastIndexOf('.');
+    return index >= 0 ? value.slice(index) : '';
+}
+
+function getFileKey(file) {
+    return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function renderBroadcastFileList() {
+    if (!refs.broadcastFileList) return;
+    if (state.broadcastFiles.length === 0) {
+        refs.broadcastFileList.innerHTML = `<div class="empty">${escapeHtml(
+            t('broadcastNoFilesSelected', '尚未选择文件。')
+        )}</div>`;
+        return;
+    }
+
+    refs.broadcastFileList.innerHTML = state.broadcastFiles
+        .map((file) => `<div class="file-item">${escapeHtml(file.name)} · ${escapeHtml(formatFileSize(file.size))}</div>`)
+        .join('');
+}
+
+function setBroadcastStatus(level, message) {
+    state.broadcastStatus = {
+        level,
+        message: String(message || '')
+    };
+    renderBroadcastStatus();
+}
+
+function renderBroadcastStatus() {
+    if (!refs.broadcastFileStatus) return;
+    refs.broadcastFileStatus.className = `file-status ${state.broadcastStatus.level || 'info'}`;
+    refs.broadcastFileStatus.textContent = state.broadcastStatus.message
+        || t('broadcastDropHint', '可以粘贴或拖拽文件到这里，最多 3 个文件，每个不超过 5MB。');
+}
+function addQuote(source, text) {
+    const cleanedSource = String(source || '').trim();
+    const cleanedText = String(text || '').trim();
+    if (!cleanedSource || !cleanedText || cleanedText === t('waitingForResponse', '等待响应...')) {
+        window.alert(t('routeNoQuotes', '请至少引用一个模型回答后再路由。'));
+        return;
+    }
+
+    const isDuplicate = state.quoteList.some((item) => item.source === cleanedSource && item.text === cleanedText);
+    if (isDuplicate) {
+        return;
+    }
+
+    state.quoteList = [...state.quoteList, { source: cleanedSource, text: cleanedText }];
+    renderQuoteList();
+    refreshRouterComposer();
+}
+
+function removeQuote(index) {
+    state.quoteList = state.quoteList.filter((_, currentIndex) => currentIndex !== index);
+    renderQuoteList();
+    refreshRouterComposer();
+}
+
+function onClearQuotes() {
+    state.quoteList = [];
+    renderQuoteList();
+    refreshRouterComposer();
+}
+
+function renderQuoteList() {
+    if (!refs.quoteList) return;
+    if (state.quoteList.length === 0) {
+        refs.quoteList.innerHTML = `<div class="empty">${escapeHtml(
+            t('routerQuotesEmpty', '点击“引用”把回答加入路由器。')
+        )}</div>`;
+        return;
+    }
+
+    refs.quoteList.innerHTML = state.quoteList
+        .map((item, index) => `
+            <div class="quote-item" data-index="${index}">
+                <span class="quote-close" title="remove">×</span>
+                <div><strong>${escapeHtml(item.source)}</strong></div>
+                <div>${escapeHtml(truncateText(item.text, 260))}</div>
+            </div>
+        `)
+        .join('');
+}
+
+function onToggleRouterPreset(presetId) {
+    const result = applyPresetSelection(state, presetId);
+    if (result.errorCode === 'primary_required') {
+        window.alert(t('routePrimaryRequired', '请先选择一个主任务，再添加修饰器。'));
+        return;
+    }
+    if (result.errorCode === 'modifier_limit_reached') {
+        window.alert(t('routeModifierLimitReached', '修饰器最多只能选择 {0} 个。', [MAX_ROUTER_MODIFIERS]));
+        return;
+    }
+
+    state.selectedPrimaryPresetId = result.nextState.selectedPrimaryPresetId;
+    state.selectedModifierPresetIds = result.nextState.selectedModifierPresetIds;
+    refreshRouterComposer();
+}
+
+function onRouterSupplementInput() {
+    state.routerSupplement = String(refs.routerInput?.value || '');
+    refreshRouterComposer();
+}
+
+function refreshRouterComposer() {
+    state.generatedRouterInstruction = buildRouterInstruction(state, (key) => t(key, ''));
+    updatePresetChips();
+    updateRouteExclusions();
+
+    if (refs.routerPreview) {
+        refs.routerPreview.textContent = state.generatedRouterInstruction
+            || t('routerGeneratedEmpty', '先选择一个主任务，再按需叠加修饰器。');
+        refs.routerPreview.classList.toggle('empty', !state.generatedRouterInstruction);
+    }
+
+    if (refs.routeBtn) {
+        refs.routeBtn.disabled = !state.selectedPrimaryPresetId
+            || state.quoteList.length === 0
+            || getRouteTargets().length === 0;
+    }
+}
+
+function updatePresetChips() {
+    document.querySelectorAll('.chip[data-preset-id]').forEach((node) => {
+        const element = node;
+        const presetId = element.dataset.presetId || '';
+        const preset = getPresetById(presetId);
+        if (!preset) return;
+
+        const isActive = preset.role === 'primary'
+            ? state.selectedPrimaryPresetId === presetId
+            : state.selectedModifierPresetIds.includes(presetId);
+
+        element.classList.toggle('active', isActive);
+        element.disabled = preset.role === 'modifier' && !state.selectedPrimaryPresetId && !isActive;
+    });
+}
+
+function updateRouteExclusions() {
+    const quotedSources = new Set(state.quoteList.map((item) => item.source));
+    getRouteTargetCheckboxes().forEach((checkbox) => {
+        const shouldDisable = quotedSources.has(checkbox.value);
+        if (shouldDisable) {
+            if (!checkbox.disabled && checkbox.checked) {
+                checkbox.dataset.restoreChecked = 'true';
+            }
+            checkbox.checked = false;
+            checkbox.disabled = true;
+            return;
+        }
+
+        const shouldRestore = checkbox.dataset.restoreChecked === 'true';
+        checkbox.disabled = false;
+        if (shouldRestore) {
+            checkbox.checked = true;
+            delete checkbox.dataset.restoreChecked;
+        }
+    });
+}
+
+async function onRoute() {
+    if (!state.selectedPrimaryPresetId) {
+        window.alert(t('routeNoPrimary', '请先选择一个主任务。'));
+        return;
+    }
+
+    if (state.quoteList.length === 0) {
+        window.alert(t('routeNoQuotes', '请至少引用一个模型回答后再路由。'));
+        return;
+    }
+
+    const targets = getRouteTargets();
+    if (targets.length === 0) {
+        window.alert(t('routeNoTargets', '请至少选择一个路由目标。'));
+        return;
+    }
+
+    const finalPrompt = buildFinalRouterPrompt(
+        state.generatedRouterInstruction,
+        state.routerSupplement,
+        (key) => t(key, '')
+    );
+
+    const response = await sendMessage({
+        type: 'ROUTE',
+        instruction: finalPrompt,
+        quote: buildRouteReferenceBlock(),
+        targets
+    });
+
+    if (response?.status === 'route_done') {
+        window.alert(t('routeSentCount', '已向 {0} 个模型发起路由。', [response.sent_to || targets.length]));
+        return;
+    }
+
+    window.alert(t('routeFailedPrefix', '路由失败：{0}', [localizeBackgroundError(response) || 'Unknown error']));
+}
+
+function buildRouteReferenceBlock() {
+    return state.quoteList
+        .map((item, index) => {
+            const prefix = t('routeReferencePrefix', '参考 {0} / {1}', [item.source, index + 1]);
+            return `${prefix}\n${item.text}`;
+        })
+        .join('\n\n');
+}
+async function onAddCandidate(model) {
+    if (!MODELS.includes(model)) {
+        window.alert(t('unknownModel', '未知模型：{0}', [model]));
+        return;
+    }
+
+    let roundId = state.activeRoundId || '';
+    if (state.activeRound && state.activeRound.status !== 'collecting') {
+        const shouldCreateFresh = window.confirm(
+            t('candidateRoundClosedConfirm', '当前轮次已关闭或正在评审。要为这个候选答案新建一轮吗？')
+        );
+        if (!shouldCreateFresh) {
+            return;
+        }
+        roundId = '';
+    }
+
+    const questionIfCreate = String(refs.globalInput?.value || '').trim()
+        || state.activeRound?.question
+        || t('candidateDefaultQuestion', '手动加入候选答案');
+
+    const targetModelsIfCreate = getBroadcastTargets();
+    const response = await sendMessage({
+        type: 'ROUND_ADD_CANDIDATE',
+        model,
+        roundId,
+        createRoundIfMissing: true,
+        questionIfCreate,
+        targetModelsIfCreate: targetModelsIfCreate.length > 0 ? targetModelsIfCreate : MODELS
+    });
+
+    if (response?.status === 'candidate_added') {
+        if (response.roundId) {
+            await loadRound(response.roundId);
+        }
+        if (response.duplicate) {
+            window.alert(t('candidateDuplicate', '这条回答已经在当前轮次里了，没有重复加入。'));
+        }
+        return;
+    }
+
+    window.alert(t('candidateAddFailedPrefix', '加入候选失败：{0}', [
+        localizeBackgroundError(response) || t('candidateAddFailed', '加入候选失败。')
+    ]));
+}
+
+async function onDeleteRound() {
+    if (!state.activeRoundId) {
+        window.alert(t('deleteRoundNoActive', '当前没有可删除的轮次。'));
+        return;
+    }
+
+    const confirmed = window.confirm(
+        t('deleteRoundConfirm', '确定删除当前轮次吗？此操作无法撤销。')
+    );
+    if (!confirmed) {
+        return;
+    }
+
+    const response = await sendMessage({
+        type: 'ROUND_DELETE',
+        roundId: state.activeRoundId
+    });
+
+    if (response?.status === 'round_deleted') {
+        clearActiveRound();
+        await loadLatestRound();
+        window.alert(t('roundDeleted', '当前轮次已删除。'));
+        return;
+    }
+
+    window.alert(t('deleteRoundFailedPrefix', '删除轮次失败：{0}', [
+        localizeBackgroundError(response) || 'Unknown error'
+    ]));
+}
+
+async function onStartReview() {
+    if (!state.activeRoundId || !state.activeRound) {
+        window.alert(t('reviewNoRound', '当前没有活动轮次，请先群发创建一轮。'));
+        return;
+    }
+
+    const judgeModels = getJudgeModels();
+    if (judgeModels.length === 0) {
+        window.alert(t('reviewSelectJudge', '请至少选择一个评委模型。'));
+        return;
+    }
+
     const mode = getCurrentReviewMode();
-    refs.startReviewBtn.textContent = mode === REVIEW_MODES.discussion ? 'Start Discussion Review' : 'Start Scoring Review';
-    refs.reviewTemplate.placeholder = mode === REVIEW_MODES.discussion
-        ? 'Discussion template (supports {{question}} and {{answers}})'
-        : 'Scoring template (supports {{question}} and {{answers}})';
+    const labelMode = getCurrentLabelMode();
+    const candidateCount = Array.isArray(state.activeRound.candidates) ? state.activeRound.candidates.length : 0;
+
+    if (mode === REVIEW_MODES.scoring && candidateCount < 2) {
+        window.alert(t('reviewScoringMinCandidates', '评分评审至少需要 2 个候选答案。'));
+        return;
+    }
+    if (mode === REVIEW_MODES.discussion && candidateCount < 1) {
+        window.alert(t('reviewDiscussionMinCandidates', '讨论评审至少需要 1 个候选答案。'));
+        return;
+    }
+
+    if (state.activeRound.status === 'reviewing') {
+        const restart = window.confirm(
+            t('reviewRestartConfirm', '当前评审仍在进行中，重新开始会覆盖未完成结果。要继续吗？')
+        );
+        if (!restart) {
+            return;
+        }
+    }
+
+    if (mode === REVIEW_MODES.scoring && judgeModels.length < 2) {
+        const proceed = window.confirm(
+            t('reviewLowJudgeCountConfirm', '评分评审少于 2 个评委时结果可能不稳定。要继续吗？')
+        );
+        if (!proceed) {
+            return;
+        }
+    }
+
+    await persistCurrentTemplate();
+    state.isStartingReview = true;
+    syncReviewControlsState();
+
+    const response = await sendMessage({
+        type: 'ROUND_START_REVIEW',
+        roundId: state.activeRoundId,
+        judgeModels,
+        promptTemplate: refs.reviewTemplate?.value || getDefaultTemplateByMode(mode),
+        mode,
+        labelMode,
+        weights: FIXED_WEIGHTS,
+        selfReviewWeight: state.settings.selfReviewWeight
+    });
+
+    state.isStartingReview = false;
+    syncReviewControlsState();
+
+    if (response?.status === 'review_started') {
+        await loadRound(state.activeRoundId);
+        window.alert(t('reviewStarted', '评审任务已经启动。'));
+        return;
+    }
+
+    window.alert(t('reviewStartFailedPrefix', '启动评审失败：{0}', [
+        localizeBackgroundError(response) || t('reviewStartFailed', '启动评审失败。')
+    ]));
 }
 
-function syncReviewControlsState() {
-    const reviewLocked = state.activeRound?.status === 'reviewing';
-    const requestPending = state.isStartingReview === true;
-
-    refs.reviewTemplate.disabled = reviewLocked || requestPending;
-    refs.startReviewBtn.disabled = requestPending;
-    refs.reviewMode.disabled = requestPending;
-    refs.labelMode.disabled = requestPending;
-}
-
-function refreshTemplateEditorForCurrentMode() {
+async function onResetTemplate() {
     const mode = getCurrentReviewMode();
     const key = getTemplateKeyByMode(mode);
-    refs.reviewTemplate.value = String(state.settings[key] || getDefaultTemplateByMode(mode));
-}
-
-async function persistCurrentTemplate() {
-    const mode = getCurrentReviewMode();
-    const key = getTemplateKeyByMode(mode);
-    const value = refs.reviewTemplate.value || getDefaultTemplateByMode(mode);
-    state.settings[key] = value;
-    await saveRtSettings({ [key]: value });
+    const nextTemplate = getDefaultTemplateByMode(mode);
+    state.settings[key] = nextTemplate;
+    refs.reviewTemplate.value = nextTemplate;
+    await saveRtSettings({ [key]: nextTemplate });
 }
 
 async function onReviewModeChange() {
-    const prevMode = state.reviewMode;
+    const previousMode = state.reviewMode;
     const nextMode = getCurrentReviewMode();
 
-    if (prevMode !== nextMode) {
-        const prevKey = getTemplateKeyByMode(prevMode);
-        const prevTemplate = refs.reviewTemplate.value || getDefaultTemplateByMode(prevMode);
-        state.settings[prevKey] = prevTemplate;
-        await saveRtSettings({ [prevKey]: prevTemplate });
+    if (previousMode !== nextMode) {
+        const previousKey = getTemplateKeyByMode(previousMode);
+        const previousTemplate = refs.reviewTemplate?.value || getDefaultTemplateByMode(previousMode);
+        state.settings[previousKey] = previousTemplate;
+        await saveRtSettings({ [previousKey]: previousTemplate });
     }
 
     state.reviewMode = nextMode;
@@ -347,1221 +1134,354 @@ async function onLabelModeChange() {
     await saveRtSettings({ labelMode: nextMode });
 }
 
-async function loadLatestRound() {
-    try {
-        const listResp = await sendMessage({ type: 'ROUND_LIST', limit: 1 });
-        const rounds = Array.isArray(listResp?.rounds) ? listResp.rounds : [];
-        if (rounds.length === 0) {
-            await setActiveRound(null);
-            return;
-        }
-        await setActiveRound(rounds[0].roundId);
-    } catch (error) {
-        console.error('Failed to load latest round:', error);
-        await setActiveRound(null);
-    }
-}
-
-async function setActiveRound(roundId) {
-    if (!roundId) {
-        state.activeRoundId = null;
-        state.activeRound = null;
-        state.selectedCandidateId = null;
-        renderRound();
-        renderReviewProgress();
-        renderJudgeStatusList();
-        renderResultBoard();
-        syncCandidateButtons();
-        syncReviewControlsState();
-        return;
-    }
-
-    const response = await sendMessage({ type: 'ROUND_GET', roundId });
-    if (!response || response.status !== 'ok') {
-        throw new Error(response?.message || 'ROUND_GET failed');
-    }
-
-    state.activeRoundId = roundId;
-    state.activeRound = response.round;
-    if (!isCandidateInActiveRound(state.selectedCandidateId)) {
-        state.selectedCandidateId = null;
-    }
-    renderRound();
-    renderReviewProgress();
-    renderJudgeStatusList();
-    renderResultBoard();
-    syncCandidateButtons();
-    syncReviewControlsState();
-}
-
-function isCandidateInActiveRound(candidateId) {
-    if (!candidateId || !state.activeRound) return false;
-    return (state.activeRound.candidates || []).some((candidate) => candidate.candidateId === candidateId);
-}
-
-async function ensureRoundForBroadcast(question, targetModels) {
-    if (state.activeRoundId && state.activeRound) {
-        if (state.activeRound.status === 'collecting' || state.activeRound.status === 'reviewing') {
-            return state.activeRoundId;
-        }
-    }
-
-    const resp = await sendMessage({
-        type: 'ROUND_CREATE',
-        question,
-        targetModels
-    });
-
-    if (resp?.status !== 'round_created') {
-        throw new Error(resp?.message || 'Failed to create round');
-    }
-
-    await setActiveRound(resp.roundId);
-    return resp.roundId;
-}
-
-async function onBroadcast() {
-    const text = String(refs.globalInput.value || '').trim();
-    if (!text) {
-        setBroadcastStatus('error', 'Please enter a question before broadcasting.');
-        return;
-    }
-    const targets = getCheckedValues('.target-selector input[type="checkbox"]');
-    if (targets.length === 0) {
-        setBroadcastStatus('error', 'Please select at least one target model.');
-        return;
-    }
-    const validation = validateBroadcastFiles(state.broadcastFiles);
-    if (!validation.ok) {
-        setBroadcastStatus('error', validation.message);
-        return;
-    }
-
-    refs.broadcastBtn.disabled = true;
-    if (refs.broadcastAttachBtn) refs.broadcastAttachBtn.disabled = true;
-    if (refs.broadcastClearFilesBtn) refs.broadcastClearFilesBtn.disabled = true;
-    setBroadcastStatus('info', 'Broadcasting...');
-
-    try {
-        const attachments = await buildBroadcastAttachments(state.broadcastFiles);
-        await ensureRoundForBroadcast(text, targets);
-        const response = await sendMessage({
-            type: 'BROADCAST',
-            text,
-            targets,
-            attachments
-        });
-
-        if (response?.status !== 'broadcast_done') {
-            const degraded = Array.isArray(response?.degraded) ? response.degraded : [];
-            const skipped = Array.isArray(response?.skipped) ? response.skipped : [];
-            const failed = Array.isArray(response?.failed) ? response.failed : [];
-            const details = (degraded.length > 0 || skipped.length > 0 || failed.length > 0)
-                ? buildBroadcastOutcomeMessage([], degraded, skipped, failed)
-                : '';
-            setBroadcastStatus('error', getBroadcastErrorMessage(response), details);
-            return;
-        }
-
-        const sentModels = Array.isArray(response?.sentModels) ? response.sentModels : [];
-        const degraded = Array.isArray(response?.degraded) ? response.degraded : [];
-        const skipped = Array.isArray(response?.skipped) ? response.skipped : [];
-        const failed = Array.isArray(response?.failed) ? response.failed : [];
-
-        if (sentModels.length > 0) {
-            clearBroadcastFiles();
-        }
-
-        if (degraded.length > 0 || skipped.length > 0 || failed.length > 0) {
-            setBroadcastStatus('warn', buildBroadcastOutcomeMessage(sentModels, degraded, skipped, failed));
-        } else {
-            setBroadcastStatus('success', `Broadcast sent to ${sentModels.length} model(s).`);
-        }
-    } catch (error) {
-        console.error(error);
-        setBroadcastStatus('error', `Broadcast failed: ${error.message || String(error)}`);
-    } finally {
-        refs.broadcastBtn.disabled = false;
-        if (refs.broadcastAttachBtn) refs.broadcastAttachBtn.disabled = false;
-        if (refs.broadcastClearFilesBtn) refs.broadcastClearFilesBtn.disabled = false;
-    }
-}
-
-function renderBroadcastFileList() {
-    if (!refs.broadcastFileList) return;
-
-    if (!Array.isArray(state.broadcastFiles) || state.broadcastFiles.length === 0) {
-        refs.broadcastFileList.innerHTML = '<div class="empty">No files selected.</div>';
-        if (refs.broadcastClearFilesBtn) refs.broadcastClearFilesBtn.disabled = true;
-        return;
-    }
-
-    refs.broadcastFileList.innerHTML = state.broadcastFiles.map((file, index) => {
-        const name = escapeHtml(String(file?.name || `file-${index + 1}`));
-        const sizeText = escapeHtml(formatBytes(Number(file?.size || 0)));
-        return `<div class="file-item">${index + 1}. ${name} (${sizeText})</div>`;
-    }).join('');
-    if (refs.broadcastClearFilesBtn) refs.broadcastClearFilesBtn.disabled = false;
-}
-
-function renderBroadcastStatus() {
-    if (!refs.broadcastFileStatus) return;
-
-    const level = String(state.broadcastStatus?.level || 'info').toLowerCase();
-    const safeLevel = ['info', 'success', 'warn', 'error'].includes(level) ? level : 'info';
-    const message = String(state.broadcastStatus?.message || '').trim();
-    const details = String(state.broadcastStatus?.details || '').trim();
-
-    refs.broadcastFileStatus.className = `file-status ${safeLevel}`;
-    refs.broadcastFileStatus.innerText = details ? `${message}\n${details}` : message;
-}
-
-function setBroadcastStatus(level, message, details = '') {
-    state.broadcastStatus = {
-        level: String(level || 'info').toLowerCase(),
-        message: String(message || ''),
-        details: String(details || '')
-    };
-    renderBroadcastStatus();
-}
-
-function onBroadcastAttachClick() {
-    refs.broadcastFileInput?.click();
-}
-
-function onSelectBroadcastFiles(event) {
-    const input = event?.target;
-    const files = Array.from(input?.files || []);
-    mergeBroadcastFiles(files, 'Selected files');
-    if (input) input.value = '';
-}
-
-function onClearBroadcastFiles() {
-    clearBroadcastFiles();
-    setBroadcastStatus('info', 'Attachments cleared.');
-}
-
-function clearBroadcastFiles() {
-    state.broadcastFiles = [];
-    if (refs.broadcastFileInput) refs.broadcastFileInput.value = '';
-    renderBroadcastFileList();
-}
-
-function onPanelPaste(event) {
-    const clipboardData = event?.clipboardData;
-    if (!clipboardData) return;
-
-    const files = extractFilesFromClipboardData(clipboardData);
-    if (files.length === 0) {
-        return;
-    }
-
-    event.preventDefault();
-    mergeBroadcastFiles(files, 'Pasted files');
-}
-
-function onPanelDragEnter(event) {
-    if (!hasFilePayload(event?.dataTransfer)) return;
-    event.preventDefault();
-    state.dragDepth += 1;
-    document.body.classList.add('drag-active');
-}
-
-function onPanelDragOver(event) {
-    if (!hasFilePayload(event?.dataTransfer)) return;
-    event.preventDefault();
-    if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = 'copy';
-    }
-}
-
-function onPanelDragLeave(event) {
-    if (!hasFilePayload(event?.dataTransfer)) return;
-    event.preventDefault();
-    state.dragDepth = Math.max(0, state.dragDepth - 1);
-    if (state.dragDepth === 0) {
-        document.body.classList.remove('drag-active');
-    }
-}
-
-function onPanelDrop(event) {
-    if (!hasFilePayload(event?.dataTransfer)) return;
-    event.preventDefault();
-    state.dragDepth = 0;
-    document.body.classList.remove('drag-active');
-
-    const files = Array.from(event?.dataTransfer?.files || []);
-    mergeBroadcastFiles(files, 'Dropped files');
-}
-
-function hasFilePayload(dataTransfer) {
-    if (!dataTransfer) return false;
-    if (dataTransfer.files && dataTransfer.files.length > 0) return true;
-    const types = Array.from(dataTransfer.types || []);
-    return types.includes('Files');
-}
-
-function extractFilesFromClipboardData(clipboardData) {
-    const files = [];
-    const items = Array.from(clipboardData.items || []);
-
-    for (const item of items) {
-        if (item?.kind !== 'file') continue;
-        const file = item.getAsFile?.();
-        if (file) files.push(file);
-    }
-
-    if (files.length > 0) {
-        return files;
-    }
-
-    return Array.from(clipboardData.files || []);
-}
-
-function mergeBroadcastFiles(rawFiles, sourceLabel = 'Files') {
-    const incoming = normalizeIncomingFiles(rawFiles);
-    if (incoming.length === 0) {
-        setBroadcastStatus('warn', `${sourceLabel}: no usable file detected.`);
-        return;
-    }
-
-    const existingFingerprints = new Set(state.broadcastFiles.map(getFileFingerprint));
-    const uniqueFiles = [];
-    const duplicateFiles = [];
-
-    for (const file of incoming) {
-        const fingerprint = getFileFingerprint(file);
-        if (existingFingerprints.has(fingerprint)) {
-            duplicateFiles.push(file);
-            continue;
-        }
-        existingFingerprints.add(fingerprint);
-        uniqueFiles.push(file);
-    }
-
-    let candidates = uniqueFiles;
-    let duplicateAction = 'skipped';
-
-    if (duplicateFiles.length > 0) {
-        const keepDuplicates = confirm(`Detected ${duplicateFiles.length} duplicate file(s). Keep duplicates?`);
-        if (keepDuplicates) {
-            duplicateAction = 'kept';
-            candidates = uniqueFiles.concat(duplicateFiles);
-        }
-    }
-
-    const accepted = [];
-    const rejectedType = [];
-    const rejectedSize = [];
-
-    for (const file of candidates) {
-        const validation = validateSingleBroadcastFile(file);
-        if (!validation.ok) {
-            if (validation.reason === 'size') {
-                rejectedSize.push(file);
-            } else {
-                rejectedType.push(file);
-            }
-            continue;
-        }
-        accepted.push(file);
-    }
-
-    const availableSlots = Math.max(0, BROADCAST_MAX_FILES - state.broadcastFiles.length);
-    const kept = accepted.slice(0, availableSlots);
-    const overflowCount = Math.max(0, accepted.length - kept.length);
-
-    if (kept.length > 0) {
-        state.broadcastFiles = state.broadcastFiles.concat(kept);
-    }
-
-    renderBroadcastFileList();
-
-    const details = [];
-    details.push(`Added ${kept.length} file(s).`);
-    if (duplicateFiles.length > 0) details.push(`Duplicates ${duplicateAction}: ${duplicateFiles.length}.`);
-    if (rejectedType.length > 0) details.push(`Type rejected: ${rejectedType.length}.`);
-    if (rejectedSize.length > 0) details.push(`Size rejected: ${rejectedSize.length}.`);
-    if (overflowCount > 0) details.push(`Skipped by limit (${BROADCAST_MAX_FILES} files max): ${overflowCount}.`);
-
-    const totalRejected = rejectedType.length + rejectedSize.length + overflowCount + (duplicateAction === 'skipped' ? duplicateFiles.length : 0);
-
-    if (kept.length > 0 && totalRejected === 0) {
-        setBroadcastStatus('success', `${sourceLabel} queued.`, details.join(' '));
-        return;
-    }
-
-    if (kept.length > 0) {
-        setBroadcastStatus('warn', `${sourceLabel} partially queued.`, details.join(' '));
-        return;
-    }
-
-    setBroadcastStatus('error', `${sourceLabel} not queued.`, details.join(' '));
-}
-
-function normalizeIncomingFiles(rawFiles) {
-    const normalized = [];
-    const files = Array.from(rawFiles || []);
-
-    for (const file of files) {
-        if (!(file instanceof File)) continue;
-        normalized.push(ensureFileName(file));
-    }
-
-    return normalized;
-}
-
-function ensureFileName(file) {
-    const name = String(file?.name || '').trim();
-    if (name) {
-        return file;
-    }
-
-    const mimeType = String(file?.type || '').toLowerCase();
-    const guessedExt = Object.entries(BROADCAST_EXT_TO_MIME)
-        .find(([, mime]) => mime === mimeType)?.[0] || '.bin';
-    const generatedName = `pasted-${Date.now()}${guessedExt}`;
-
-    return new File([file], generatedName, {
-        type: mimeType || 'application/octet-stream',
-        lastModified: Number(file?.lastModified || Date.now())
-    });
-}
-
-function validateBroadcastFiles(files) {
-    const list = Array.from(files || []);
-
-    if (list.length > BROADCAST_MAX_FILES) {
-        return {
-            ok: false,
-            message: `Too many attachments. Max ${BROADCAST_MAX_FILES} files are allowed.`
-        };
-    }
-
-    for (const file of list) {
-        const validation = validateSingleBroadcastFile(file);
-        if (!validation.ok) {
-            if (validation.reason === 'size') {
-                return {
-                    ok: false,
-                    message: `File too large: ${file.name} (max ${formatBytes(BROADCAST_MAX_FILE_BYTES)}).`
-                };
-            }
-            return {
-                ok: false,
-                message: `Unsupported file type: ${file.name}.`
-            };
-        }
-    }
-
-    return { ok: true };
-}
-
-function validateSingleBroadcastFile(file) {
-    const size = Number(file?.size || 0);
-    if (!Number.isFinite(size) || size <= 0 || size > BROADCAST_MAX_FILE_BYTES) {
-        return { ok: false, reason: 'size' };
-    }
-
-    const ext = getFileExtension(file?.name);
-    const mimeType = String(file?.type || '').toLowerCase();
-    const resolvedMime = mimeType || BROADCAST_EXT_TO_MIME[ext] || '';
-    const allowed = BROADCAST_ALLOWED_MIME.has(resolvedMime) || BROADCAST_ALLOWED_EXT.has(ext);
-
-    if (!allowed) {
-        return { ok: false, reason: 'type' };
-    }
-
-    return { ok: true, mimeType: resolvedMime || 'application/octet-stream' };
-}
-
-function getFileExtension(name) {
-    const value = String(name || '').toLowerCase();
-    const idx = value.lastIndexOf('.');
-    if (idx < 0) return '';
-    return value.slice(idx);
-}
-
-function getFileFingerprint(file) {
-    return `${String(file?.name || '')}::${Number(file?.size || 0)}::${Number(file?.lastModified || 0)}`;
-}
-
-async function buildBroadcastAttachments(files) {
-    const list = Array.from(files || []);
-    const attachments = [];
-
-    for (const file of list) {
-        const validation = validateSingleBroadcastFile(file);
-        if (!validation.ok) {
-            throw new Error(`Invalid attachment: ${file?.name || 'unknown file'}`);
-        }
-
-        const base64 = await fileToBase64(file);
-        attachments.push({
-            name: String(file?.name || 'attachment'),
-            mimeType: validation.mimeType || 'application/octet-stream',
-            size: Number(file?.size || 0),
-            base64
-        });
-    }
-
-    return attachments;
-}
-
-function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-
-        reader.onload = () => {
-            const dataUrl = String(reader.result || '');
-            const commaIndex = dataUrl.indexOf(',');
-            resolve(commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl);
-        };
-
-        reader.onerror = () => {
-            reject(new Error(`Failed to read file: ${file?.name || 'unknown file'}`));
-        };
-
-        reader.readAsDataURL(file);
-    });
-}
-
-function getBroadcastErrorMessage(response) {
-    const code = String(response?.code || '').trim().toLowerCase();
-    if (code === 'invalid_attachments') {
-        return response?.message || 'Invalid attachments. Please check file size and type.';
-    }
-    if (code === 'broadcast_no_supported_targets') {
-        return response?.message || 'No selected model supports the provided attachments.';
-    }
-    if (code === 'send_not_confirmed') {
-        return response?.message || 'Message was injected but send was not confirmed. Please check model page and retry.';
-    }
-    return response?.message || 'Broadcast failed.';
-}
-
-function buildBroadcastOutcomeMessage(sentModels, degraded, skipped, failed) {
-    const sentCount = Array.isArray(sentModels) ? sentModels.length : 0;
-    const degradedItems = Array.isArray(degraded) ? degraded : [];
-    const skippedItems = Array.isArray(skipped) ? skipped : [];
-    const failedItems = Array.isArray(failed) ? failed : [];
-
-    const segments = [`Sent ${sentCount} model(s).`];
-
-    if (degradedItems.length > 0) {
-        const degradedDetail = degradedItems
-            .map((item) => `${item.model}: ${item.code}`)
-            .join(', ');
-        segments.push(`Attachment downgraded to text on ${degradedItems.length} model(s) (${degradedDetail}).`);
-    }
-
-    if (skippedItems.length > 0) {
-        const skippedDetail = skippedItems
-            .map((item) => `${item.model}: ${item.code}`)
-            .join(', ');
-        segments.push(`Skipped ${skippedItems.length} (${skippedDetail}).`);
-    }
-
-    if (failedItems.length > 0) {
-        const failedDetail = failedItems
-            .map((item) => {
-                if (String(item?.code || '') === 'send_not_confirmed') {
-                    return `${item.model}: send_not_confirmed (check model page and retry)`;
-                }
-                return `${item.model}: ${item.code}`;
-            })
-            .join(', ');
-        segments.push(`Failed ${failedItems.length} (${failedDetail}).`);
-    }
-
-    return segments.join(' ');
-}
-
-function formatBytes(bytes) {
-    const value = Number(bytes);
-    if (!Number.isFinite(value) || value <= 0) return '0 B';
-    if (value < 1024) return `${value} B`;
-    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-    return `${(value / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-function getManualRoundQuestion() {
-    return String(refs.globalInput?.value || '').trim() || '閹靛濮╅崶鐐叉値';
-}
-
-function getManualRoundTargetModels() {
-    const selected = getCheckedValues('.target-selector input[type="checkbox"]');
-    return selected.length > 0 ? selected : Object.keys(MODEL_CARD_MAP);
-}
-
-async function resolveRoundForCandidate() {
-    if (!state.activeRoundId || !state.activeRound) {
-        return { roundId: null, createRoundIfMissing: true };
-    }
-
-    const status = String(state.activeRound.status || '').trim().toLowerCase();
-    if (status === 'collecting') {
-        return { roundId: state.activeRoundId, createRoundIfMissing: false };
-    }
-
-    if (['reviewing', 'completed', 'failed'].includes(status)) {
-        const createNewRound = confirm(
-            'Current round is already closed or reviewing. Create a new round for this candidate?'
-        );
-        if (createNewRound) {
-            return { roundId: null, createRoundIfMissing: true };
-        }
-        return { roundId: state.activeRoundId, createRoundIfMissing: false };
-    }
-
-    return { roundId: state.activeRoundId, createRoundIfMissing: false };
-}
-
-function getCandidateAddErrorMessage(response) {
-    const code = String(response?.code || '').trim().toLowerCase();
-
-    if (code === 'candidate_summary_missing') {
-        return 'No captured answer found for this model. Wait for model output, then try again.';
-    }
-    if (code === 'round_not_found') {
-        return 'The selected round was not found. Please refresh and try again.';
-    }
-    if (code === 'invalid_request') {
-        return response?.message || 'Invalid request when adding candidate.';
-    }
-    return response?.message || 'Failed to add candidate.';
-}
-
-async function onAddCandidate(model) {
-    try {
-        const resolved = await resolveRoundForCandidate();
-        const payload = {
-            type: 'ROUND_ADD_CANDIDATE',
-            model
-        };
-
-        if (resolved.roundId) {
-            payload.roundId = resolved.roundId;
-        }
-        if (resolved.createRoundIfMissing) {
-            payload.createRoundIfMissing = true;
-            payload.questionIfCreate = getManualRoundQuestion();
-            payload.targetModelsIfCreate = getManualRoundTargetModels();
-        }
-
-        const response = await sendMessage({
-            ...payload
-        });
-
-        if (response?.status !== 'candidate_added') {
-            alert(getCandidateAddErrorMessage(response));
-            return;
-        }
-
-        if (response?.duplicate) {
-            alert('This answer is already in the round. No duplicate candidate was added.');
-        }
-
-        await setActiveRound(response.roundId || resolved.roundId || state.activeRoundId);
-    } catch (error) {
-        console.error(error);
-        alert(`Failed to add candidate: ${error.message}`);
-    }
-}
-
-function onClearQuotes() {
-    state.quoteList = [];
-    renderQuoteList();
-    updateRouteExclusions();
-}
-
-function addQuote(source, text) {
-    if (!source || !text) return;
-    state.quoteList.push({ source, text });
-    renderQuoteList();
-    updateRouteExclusions();
-}
-
-function removeQuote(index) {
-    if (!Number.isInteger(index) || index < 0 || index >= state.quoteList.length) return;
-    state.quoteList.splice(index, 1);
-    renderQuoteList();
-    updateRouteExclusions();
-}
-
-function renderQuoteList() {
-    if (state.quoteList.length === 0) {
-        refs.quoteList.innerHTML = '<div class="empty">閻愮懓鍤垾婊冪穿閻劉鈧繃濡搁崶鐐电摕閸旂姴鍙嗙捄顖滄暠閸?/div>';
-        return;
-    }
-
-    refs.quoteList.innerHTML = state.quoteList
-        .map((quote, index) => (
-            `<div class="quote-item" data-index="${index}">
-                <span class="quote-close">鑴?/span>
-                <strong>${escapeHtml(quote.source)}</strong><br>
-                ${escapeHtml(shorten(quote.text, 220))}
-            </div>`
-        ))
-        .join('');
-}
-
-function updateRouteExclusions() {
-    const quotedSources = new Set(state.quoteList.map((q) => q.source));
-    const checkboxes = document.querySelectorAll('.router-targets input[type="checkbox"]');
-
-    checkboxes.forEach((checkbox) => {
-        const disabled = quotedSources.has(checkbox.value);
-        checkbox.disabled = disabled;
-        if (disabled) checkbox.checked = false;
-        checkbox.parentElement.style.opacity = disabled ? '0.55' : '1';
-    });
-}
-
-async function onRoute() {
-    if (state.quoteList.length === 0) {
-        alert('Please quote at least one model answer before routing.');
-        return;
-    }
-
-    const targets = getCheckedValues('.router-targets input[type="checkbox"]');
-    if (targets.length === 0) {
-        alert('Please select at least one routing target.');
-        return;
-    }
-
-    const instruction = String(refs.routerInput.value || '').trim();
-    const quoteText = state.quoteList
-        .map((q, i) => `[Reference ${i + 1} / ${q.source}]\n${q.text}`)
-        .join('\n\n');
-
-    try {
-        await sendMessage({
-            type: 'ROUTE',
-            source: 'Multiple',
-            quote: quoteText,
-            instruction,
-            targets
-        });
-    } catch (error) {
-        console.error(error);
-        alert(`Route failed: ${error.message}`);
-    }
-}
-
-async function onStartReview() {
-    if (state.isStartingReview) {
-        return;
-    }
-
-    if (!state.activeRoundId || !state.activeRound) {
-        alert('No active round found. Please broadcast first to create a round.');
-        return;
-    }
-
-    if (
-        state.activeRound.status === 'reviewing'
-        && !confirm('Current review is running. Restarting will overwrite unfinished judge results. Continue?')
-    ) {
-        return;
-    }
-
-    const reviewMode = getCurrentReviewMode();
-    const labelMode = getCurrentLabelMode();
-    const minCandidates = reviewMode === REVIEW_MODES.discussion ? 1 : 2;
-    if ((state.activeRound.candidateIds || []).length < minCandidates) {
-        if (reviewMode === REVIEW_MODES.discussion) {
-            alert('Discussion review requires at least 1 candidate.');
-        } else {
-            alert('Scoring review requires at least 2 candidates.');
-        }
-        return;
-    }
-
-    const judgeModels = getCheckedValues('.judge-targets input[type="checkbox"]');
-    if (judgeModels.length === 0) {
-        alert('Please select at least one judge model.');
-        return;
-    }
-    if (reviewMode === REVIEW_MODES.scoring && judgeModels.length < 2 && !confirm('Scoring with fewer than 2 judges may be unstable. Continue?')) {
-        return;
-    }
-
-    const promptTemplate = refs.reviewTemplate.value || getDefaultTemplateByMode(reviewMode);
-    state.isStartingReview = true;
-    syncReviewControlsState();
-
-    try {
-        const templateKey = getTemplateKeyByMode(reviewMode);
-        state.reviewMode = reviewMode;
-        state.labelMode = labelMode;
-        state.settings.reviewMode = reviewMode;
-        state.settings.labelMode = labelMode;
-        state.settings[templateKey] = promptTemplate;
-
-        await saveRtSettings({
-            reviewMode,
-            labelMode,
-            [templateKey]: promptTemplate
-        });
-
-        const response = await sendMessage({
-            type: 'ROUND_START_REVIEW',
-            roundId: state.activeRoundId,
-            judgeModels,
-            promptTemplate,
-            mode: reviewMode,
-            labelMode,
-            weights: FIXED_WEIGHTS,
-            selfReviewWeight: 0.2
-        });
-
-        if (response?.status !== 'review_started') {
-            if (response?.code === 'candidate_answer_missing') {
-                alert('Current round has no usable candidate answers. Add candidates before starting review.');
-            } else {
-                alert(response?.message || 'Failed to start review.');
-            }
-        }
-        await setActiveRound(state.activeRoundId);
-    } catch (error) {
-        console.error(error);
-        alert(`Failed to start review: ${error.message}`);
-    } finally {
-        state.isStartingReview = false;
-        syncReviewControlsState();
-    }
-}
-
-async function onDeleteRound() {
-    if (!state.activeRoundId) {
-        alert('No active round to delete.');
-        return;
-    }
-    if (!confirm('Delete current round? This action cannot be undone.')) {
-        return;
-    }
-
-    try {
-        await sendMessage({ type: 'ROUND_DELETE', roundId: state.activeRoundId });
-        await loadLatestRound();
-    } catch (error) {
-        console.error(error);
-        alert(`Failed to delete round: ${error.message}`);
-    }
-}
-
-function onToggleCandidateDetails(candidateId) {
-    if (!candidateId) return;
-    if (state.selectedCandidateId === candidateId) {
-        state.selectedCandidateId = null;
-    } else {
-        state.selectedCandidateId = candidateId;
-    }
-    renderResultBoard();
-}
-
-function onResetTemplate() {
+async function persistCurrentTemplate() {
     const mode = getCurrentReviewMode();
     const key = getTemplateKeyByMode(mode);
-    refs.reviewTemplate.value = getDefaultTemplateByMode(mode);
-    state.settings[key] = refs.reviewTemplate.value;
-    saveRtSettings({ [key]: refs.reviewTemplate.value }).catch(console.error);
+    const value = String(refs.reviewTemplate?.value || '').trim() || getDefaultTemplateByMode(mode);
+    state.settings[key] = value;
+    await saveRtSettings({ [key]: value });
 }
 
-function onRoundEvent(message) {
-    if (!message.roundId || !state.activeRoundId) return;
-    if (message.roundId !== state.activeRoundId) return;
+function refreshTemplateEditorForCurrentMode() {
+    const mode = getCurrentReviewMode();
+    const key = getTemplateKeyByMode(mode);
+    refs.reviewTemplate.value = String(state.settings[key] || getDefaultTemplateByMode(mode));
+}
 
-    if (message.event === 'review_progress' && message.data?.progress) {
-        state.latestReviewProgress = message.data.progress;
-        renderReviewProgress();
+function updateReviewModeUI() {
+    const mode = getCurrentReviewMode();
+    refs.startReviewBtn.textContent = mode === REVIEW_MODES.discussion
+        ? t('actionStartDiscussionReview', '开始讨论评审')
+        : t('actionStartScoringReview', '开始评分评审');
+    refs.reviewTemplate.placeholder = mode === REVIEW_MODES.discussion
+        ? t('reviewTemplatePlaceholderDiscussion', '讨论模板（支持 {{question}} 和 {{answers}}）')
+        : t('reviewTemplatePlaceholderScoring', '评分模板（支持 {{question}} 和 {{answers}}）');
+}
+
+function syncReviewControlsState() {
+    const pending = state.isStartingReview === true;
+    refs.reviewTemplate.disabled = pending;
+    refs.reviewMode.disabled = pending;
+    refs.labelMode.disabled = pending;
+    refs.startReviewBtn.disabled = pending || !state.activeRoundId;
+    refs.deleteRoundBtn.disabled = !state.activeRoundId;
+}
+
+function renderCards() {
+    MODELS.forEach((model) => renderCard(model));
+}
+
+function renderCard(model) {
+    const card = document.getElementById(MODEL_CARD_MAP[model]);
+    if (!card) return;
+
+    const payload = state.modelState[model] || {};
+    const status = String(payload.status || 'idle').trim();
+    const summary = String(payload.lastSummary || payload.summary || '').trim();
+
+    const dot = card.querySelector('.status-dot');
+    const statusText = card.querySelector('.status-text');
+    const body = card.querySelector('.card-body');
+
+    dot?.classList.remove('active', 'thinking');
+    if (status === 'generating') {
+        dot?.classList.add('thinking');
+    } else if (summary) {
+        dot?.classList.add('active');
     }
 
-    if ([
-        'candidate_added',
-        'review_started',
-        'review_progress',
-        'review_done',
-        'review_failed',
-        'ranking_updated'
-    ].includes(message.event)) {
-        setActiveRound(state.activeRoundId).catch(console.error);
+    if (statusText) {
+        statusText.textContent = status === 'generating'
+            ? t('statusGenerating', '生成中')
+            : t('statusIdle', '空闲');
     }
 
-    syncReviewControlsState();
+    if (body) {
+        body.textContent = summary || t('waitingForResponse', '等待响应...');
+    }
+}
+
+function updateCard(model, status, summary) {
+    if (!model) return;
+    const nextSummary = String(summary || '').trim();
+    state.modelState[model] = {
+        ...(state.modelState[model] || {}),
+        status: String(status || '').trim() || 'idle',
+        lastSummary: nextSummary || state.modelState[model]?.lastSummary || ''
+    };
+    renderCard(model);
 }
 
 function renderRound() {
     const round = state.activeRound;
-    if (!round) {
-        refs.roundId.innerText = '-';
-        refs.roundStatus.innerText = 'none';
-        refs.roundCandidateCount.innerText = '0';
-        refs.roundCreatedAt.innerText = '-';
-        refs.roundQuestion.innerText = 'No active round.';
-        updateReviewModeUI();
-        syncReviewControlsState();
-        syncCandidateButtons();
-        return;
-    }
-
-    refs.roundId.innerText = round.roundId;
-    refs.roundStatus.innerText = round.status;
-    refs.roundCandidateCount.innerText = String((round.candidateIds || []).length);
-    refs.roundCreatedAt.innerText = new Date(round.createdAt).toLocaleString();
-    refs.roundQuestion.innerText = round.question || '(empty question)';
-    updateReviewModeUI();
-    syncReviewControlsState();
+    refs.roundId.textContent = round?.roundId || '—';
+    refs.roundStatus.textContent = round ? getRoundStatusLabel(round.status) : t('roundStatusNone', '无');
+    refs.roundCandidateCount.textContent = String(round?.candidates?.length || round?.candidateIds?.length || 0);
+    refs.roundCreatedAt.textContent = round?.createdAt ? formatDateTime(round.createdAt) : '—';
+    refs.roundQuestion.textContent = round?.question || t('roundNoActive', '当前没有活动轮次。');
 }
 
 function renderReviewProgress() {
     if (!state.activeRound) {
-        refs.reviewProgress.innerText = 'No active round.';
+        refs.reviewProgress.textContent = t('reviewHasNotStarted', '评审尚未开始。');
         return;
     }
 
-    const evaluations = state.activeRound.evaluations || [];
+    const evaluations = Array.isArray(state.activeRound.evaluations) ? state.activeRound.evaluations : [];
     if (evaluations.length === 0) {
-        refs.reviewProgress.innerText = 'Review has not started yet.';
+        refs.reviewProgress.textContent = t('reviewProgressWaiting', '等待开始评审。');
         return;
     }
 
-    const done = evaluations.filter((e) => e.status === 'done').length;
-    const failed = evaluations.filter((e) => e.status === 'parse_failed' || e.status === 'timeout').length;
-    const pending = evaluations.length - done - failed;
-    refs.reviewProgress.innerText = `鐎孤ゎ唴鏉╂稑瀹? done ${done} / failed ${failed} / pending ${pending}`;
+    const progress = buildReviewProgress(evaluations);
+    refs.reviewProgress.textContent = t('reviewProgressSummary', '已完成 {0} / 失败 {1} / 等待中 {2}', [
+        progress.done,
+        progress.failed,
+        progress.pending
+    ]);
 }
-
 function renderJudgeStatusList() {
     if (!refs.judgeStatusList) return;
-
-    const round = state.activeRound;
-    const evaluations = Array.isArray(round?.evaluations) ? round.evaluations : [];
+    const evaluations = Array.isArray(state.activeRound?.evaluations) ? state.activeRound.evaluations : [];
 
     if (evaluations.length === 0) {
-        refs.judgeStatusList.innerHTML = '<div class="empty">閺嗗倹妫ょ拠鍕潤娴犺濮?/div>';
+        refs.judgeStatusList.innerHTML = `<div class="empty">${escapeHtml(
+            t('judgeTasksEmpty', '还没有评委任务。')
+        )}</div>`;
         return;
     }
 
-    const rows = [...evaluations].sort((a, b) => {
-        const am = String(a?.judgeModel || '');
-        const bm = String(b?.judgeModel || '');
-        return am.localeCompare(bm);
-    });
-
-    refs.judgeStatusList.innerHTML = rows.map((evaluation) => {
-        const status = normalizeEvaluationStatus(evaluation.status);
-        const model = evaluation.judgeModel || 'Unknown';
-        const detail = getEvaluationStatusDetail(evaluation);
-        return `
+    refs.judgeStatusList.innerHTML = evaluations
+        .map((evaluation) => `
             <div class="judge-status-row">
                 <div class="judge-status-main">
-                    <span class="judge-status-model">${escapeHtml(model)}</span>
-                    <span class="status-pill ${escapeHtml(status)}">${escapeHtml(status)}</span>
+                    <span class="judge-status-model">${escapeHtml(evaluation.judgeModel || 'Unknown')}</span>
+                    <span class="status-pill ${escapeHtml(getJudgeStatusClass(evaluation.status))}">${escapeHtml(
+                        getJudgeStatusLabel(evaluation.status)
+                    )}</span>
                 </div>
-                <div class="judge-status-detail">${escapeHtml(detail)}</div>
+                <div class="judge-status-detail">${escapeHtml(buildJudgeStatusDetail(evaluation))}</div>
             </div>
-        `;
-    }).join('');
+        `)
+        .join('');
 }
 
 function renderResultBoard() {
-    const round = state.activeRound;
-    if (isDiscussionRound(round)) {
-        renderDiscussionResultBoard(round);
+    if (!refs.resultBoard) return;
+    if (!state.activeRound) {
+        refs.resultBoard.innerHTML = `<div class="empty">${escapeHtml(t('resultsEmpty', '暂无结果。'))}</div>`;
         return;
     }
 
-    if (!round || !Array.isArray(round.ranking) || round.ranking.length === 0) {
-        refs.resultBoard.innerHTML = '<div class="empty">閺嗗倹妫ら幒鎺戞倳缂佹挻鐏?/div>';
-        state.selectedCandidateId = null;
+    const mode = normalizeReviewMode(state.activeRound?.config?.reviewMode || state.reviewMode);
+    if (mode === REVIEW_MODES.discussion) {
+        renderDiscussionResults();
         return;
     }
 
-    const doneCount = (round.evaluations || [])
-        .filter((evaluation) => normalizeEvaluationStatus(evaluation.status) === 'done')
-        .length;
-    if (doneCount === 0) {
-        refs.resultBoard.innerHTML = '<div class="empty">閺嗗倹妫ら張澶嬫櫏鐠囧嫬鍨庣紒鎾寸亯</div>';
-        state.selectedCandidateId = null;
-        return;
-    }
-
-    const candidateMap = {};
-    (round.candidates || []).forEach((candidate) => {
-        candidateMap[candidate.candidateId] = candidate;
-    });
-
-    const rankingCandidateIds = new Set((round.ranking || []).map((item) => item.candidateId));
-    if (state.selectedCandidateId && !rankingCandidateIds.has(state.selectedCandidateId)) {
-        state.selectedCandidateId = null;
-    }
-
-    refs.resultBoard.innerHTML = round.ranking.map((item, index) => {
-        const candidate = candidateMap[item.candidateId];
-        const model = candidate?.model || 'Unknown';
-        const answerSnippet = shorten(candidate?.answerText || '', 180);
-        const reasons = collectCandidateReasons(round, item.candidateId);
-        const selected = state.selectedCandidateId === item.candidateId;
-        const detailHtml = selected ? renderCandidateJudgeDetails(round, item.candidateId) : '';
-        return `
-            <div class="rank-row ${selected ? 'selected' : ''}" data-candidate-id="${escapeHtml(item.candidateId)}">
-                <div class="rank-title">#${index + 1} ${escapeHtml(model)} | Final ${formatScore(item.finalScore)}</div>
-                <div class="small-muted">raw ${formatScore(item.rawMean)} 璺?normalized ${formatScore(item.normalizedMean)} 璺?non-self ${formatScore(item.nonSelfMean)} 璺?variance ${formatScore(item.variance)}</div>
-                <div style="margin-top:4px;">${escapeHtml(answerSnippet)}</div>
-                ${reasons ? `<div class="small-muted" style="margin-top:4px;">鐠囧嫬顓搁悶鍡欐暠: ${escapeHtml(reasons)}</div>` : ''}
-                <div class="small-muted" style="margin-top:4px;">${selected ? '閻愮懓鍤弨鎯版崳鐠囧嫬顫欑拠锔藉剰' : '閻愮懓鍤弻銉ф箙鐠囧嫬顫欑拠锔藉剰'}</div>
-                ${detailHtml}
-            </div>
-        `;
-    }).join('');
+    renderScoringResults();
 }
 
-function renderDiscussionResultBoard(round) {
-    state.selectedCandidateId = null;
-
-    if (!round) {
-        refs.resultBoard.innerHTML = '<div class="empty">閺嗗倹妫ょ拋銊啈缂佹挻鐏?/div>';
-        return;
-    }
-
-    const evaluations = Array.isArray(round.evaluations) ? [...round.evaluations] : [];
+function renderDiscussionResults() {
+    const evaluations = (state.activeRound?.evaluations || []).filter((evaluation) => evaluation.status === 'done');
     if (evaluations.length === 0) {
-        refs.resultBoard.innerHTML = '<div class="empty">閺嗗倹妫ょ拋銊啈缂佹挻鐏?/div>';
+        refs.resultBoard.innerHTML = `<div class="empty">${escapeHtml(
+            t('discussionResultEmpty', '暂无讨论结果。')
+        )}</div>`;
         return;
     }
 
-    evaluations.sort((a, b) => String(a?.judgeModel || '').localeCompare(String(b?.judgeModel || '')));
-
-    refs.resultBoard.innerHTML = evaluations.map((evaluation) => {
-        const status = normalizeEvaluationStatus(evaluation?.status);
-        const model = evaluation?.judgeModel || 'Unknown';
-        const detail = getEvaluationStatusDetail(evaluation);
-        const raw = String(evaluation?.rawResponse || '').trim();
-        const text = raw || (status === 'done' ? '[鐠併劏顔戦崶鐐差槻娑撹櫣鈹朷' : detail);
-        return `
+    refs.resultBoard.innerHTML = evaluations
+        .map((evaluation) => `
             <div class="rank-row">
-                <div class="rank-title">${escapeHtml(model)}</div>
-                <div class="small-muted" style="margin-bottom:4px;">閻樿埖鈧? <span class="status-pill ${escapeHtml(status)}">${escapeHtml(status)}</span></div>
-                <div class="rank-judge-text" style="margin-top:0; white-space: pre-wrap; word-break: break-word;">${escapeHtml(text)}</div>
+                <div class="rank-title">${escapeHtml(evaluation.judgeModel || 'Unknown')}</div>
+                <div class="small-muted">${escapeHtml(t('discussionStatusLabel', '状态'))}：${escapeHtml(
+                    getJudgeStatusLabel(evaluation.status)
+                )}</div>
+                <div class="rank-judge-text">${escapeHtml(evaluation.rawResponse || '')}</div>
             </div>
-        `;
-    }).join('');
+        `)
+        .join('');
 }
 
-function isDiscussionRound(round) {
-    return normalizeReviewMode(round?.config?.reviewMode) === REVIEW_MODES.discussion;
-}
+function renderScoringResults() {
+    const ranking = Array.isArray(state.activeRound?.ranking) ? state.activeRound.ranking : [];
+    const candidates = Array.isArray(state.activeRound?.candidates) ? state.activeRound.candidates : [];
+    const candidateMap = Object.fromEntries(candidates.map((candidate) => [candidate.candidateId, candidate]));
 
-function renderCandidateJudgeDetails(round, candidateId) {
-    const rows = buildCandidateJudgeRows(round, candidateId);
-    if (rows.length === 0) {
-        return '<div class="rank-details"><div class="rank-details-empty">No judge detail records.</div></div>';
+    if (ranking.length === 0) {
+        refs.resultBoard.innerHTML = `<div class="empty">${escapeHtml(
+            t('resultNoRanking', '暂无排名结果。')
+        )}</div>`;
+        return;
     }
 
-    return `
-        <div class="rank-details">
-            ${rows.map(({ evaluation, status, score }) => {
-                const model = evaluation?.judgeModel || 'Unknown';
-                const detail = getEvaluationStatusDetail(evaluation);
-                const sourceTag = evaluation?.normalizedBy
-                    ? `<span class="judge-source-tag">${escapeHtml(String(evaluation.normalizedBy))}</span>`
-                    : '';
+    if (!state.selectedCandidateId || !ranking.some((item) => item.candidateId === state.selectedCandidateId)) {
+        state.selectedCandidateId = ranking[0].candidateId;
+    }
 
-                if (status === 'done' && score) {
-                    const evidenceText = Array.isArray(score.evidence) && score.evidence.length > 0
-                        ? score.evidence.map((x) => String(x)).join(' | ')
-                        : '';
-                    return `
-                        <div class="rank-judge-row">
-                            <div class="rank-judge-head">
-                                <div class="rank-judge-left">
-                                    <span class="rank-judge-model">${escapeHtml(model)}</span>
-                                    <span class="status-pill done">done</span>
-                                    ${sourceTag}
-                                </div>
-                            </div>
-                            <div class="rank-judge-metrics">
-                                accuracy ${formatScore(score.accuracy)} | completeness ${formatScore(score.completeness)} | actionability ${formatScore(score.actionability)} | clarity ${formatScore(score.clarity)} | overall ${formatScore(score.overall)}
-                            </div>
-                            ${score.reason ? `<div class="rank-judge-text"><strong>Reason:</strong> ${escapeHtml(score.reason)}</div>` : ''}
-                            ${evidenceText ? `<div class="rank-judge-text"><strong>Evidence:</strong> ${escapeHtml(evidenceText)}</div>` : ''}
-                        </div>
-                    `;
-                }
-
-                return `
-                    <div class="rank-judge-row">
-                        <div class="rank-judge-head">
-                            <div class="rank-judge-left">
-                                <span class="rank-judge-model">${escapeHtml(model)}</span>
-                                <span class="status-pill ${escapeHtml(status)}">${escapeHtml(status)}</span>
-                                ${sourceTag}
-                            </div>
-                        </div>
-                        <div class="rank-judge-text">${escapeHtml(detail)}</div>
+    refs.resultBoard.innerHTML = ranking
+        .map((item, index) => {
+            const candidate = candidateMap[item.candidateId];
+            const isSelected = state.selectedCandidateId === item.candidateId;
+            return `
+                <div class="rank-row ${isSelected ? 'selected' : ''}" data-candidate-id="${escapeHtml(item.candidateId)}">
+                    <div class="rank-title">#${index + 1} ${escapeHtml(candidate?.model || 'Unknown')}</div>
+                    <div class="small-muted">
+                        ${escapeHtml(t('resultFinalScoreLabel', '最终分'))}: ${formatScore(item.finalScore)}
+                        · ${escapeHtml(t('resultRawLabel', '原始'))}: ${formatScore(item.rawMean)}
+                        · ${escapeHtml(t('resultNormalizedLabel', '归一化'))}: ${formatScore(item.normalizedMean)}
+                        · ${escapeHtml(t('resultNonSelfLabel', '非自评'))}: ${formatScore(item.nonSelfMean)}
+                        · ${escapeHtml(t('resultVarianceLabel', '方差'))}: ${formatScore(item.variance)}
                     </div>
-                `;
-            }).join('')}
-        </div>
-    `;
+                    <div class="small-muted">${escapeHtml(
+                        isSelected
+                            ? t('resultCollapseHint', '点击收起评委明细')
+                            : t('resultExpandHint', '点击展开评委明细')
+                    )}</div>
+                    ${isSelected ? `<div class="rank-details">${buildCandidateDetailsHtml(item.candidateId, candidate)}</div>` : ''}
+                </div>
+            `;
+        })
+        .join('');
 }
 
-function buildCandidateJudgeRows(round, candidateId) {
-    const evaluations = Array.isArray(round?.evaluations) ? [...round.evaluations] : [];
-    evaluations.sort((a, b) => String(a?.judgeModel || '').localeCompare(String(b?.judgeModel || '')));
-    return evaluations.map((evaluation) => {
-        const status = normalizeEvaluationStatus(evaluation?.status);
-        const score = status === 'done' ? findCandidateScoreInEvaluation(evaluation, candidateId) : null;
-        return { evaluation, status, score };
-    });
-}
-
-function findCandidateScoreInEvaluation(evaluation, candidateId) {
-    const scores = Array.isArray(evaluation?.parsedScores) ? evaluation.parsedScores : [];
-    for (const score of scores) {
-        const slot = String(score?.slot || '').trim().toUpperCase();
-        if (!slot) continue;
-        const mappedCandidate = evaluation?.blindMap?.[slot];
-        if (mappedCandidate === candidateId) {
-            return score;
-        }
+function buildCandidateDetailsHtml(candidateId, candidate) {
+    const details = collectCandidateJudgeDetails(candidateId, candidate);
+    if (details.length === 0) {
+        return `<div class="rank-details-empty">${escapeHtml(
+            t('resultNoCompletedJudge', '评委尚未完成有效评分。')
+        )}</div>`;
     }
-    return null;
+    return details.join('');
 }
 
-function collectCandidateReasons(round, candidateId) {
-    const evaluations = round.evaluations || [];
-    const reasons = [];
-    for (const evaluation of evaluations) {
-        if (evaluation.status !== 'done') continue;
-        const score = findCandidateScoreInEvaluation(evaluation, candidateId);
-        if (score?.reason) reasons.push(`[${evaluation.judgeModel}] ${score.reason}`);
-        if (reasons.length >= 2) break;
-    }
-    return reasons.join(' | ');
+function collectCandidateJudgeDetails(candidateId, candidate) {
+    const evaluations = Array.isArray(state.activeRound?.evaluations) ? state.activeRound.evaluations : [];
+    return evaluations
+        .filter((evaluation) => evaluation.status === 'done')
+        .map((evaluation) => {
+            const row = findParsedScoreForCandidate(evaluation, candidateId);
+            if (!row) return '';
+
+            const metrics = [
+                `accuracy ${formatScore(row.accuracy)}`,
+                `completeness ${formatScore(row.completeness)}`,
+                `actionability ${formatScore(row.actionability)}`,
+                `clarity ${formatScore(row.clarity)}`,
+                `overall ${formatScore(row.overall)}`
+            ].join(' · ');
+
+            const evidenceText = Array.isArray(row.evidence) ? row.evidence.filter(Boolean).join('；') : '';
+            const isSelf = candidate?.model && candidate.model === evaluation.judgeModel;
+
+            return `
+                <div class="rank-judge-row">
+                    <div class="rank-judge-head">
+                        <div class="rank-judge-left">
+                            <span class="rank-judge-model">${escapeHtml(evaluation.judgeModel || 'Unknown')}</span>
+                            ${isSelf ? `<span class="judge-source-tag">${escapeHtml(t('judgeSourceSelf', '自评'))}</span>` : ''}
+                        </div>
+                        <span class="small-muted">${escapeHtml(buildJudgeStatusDetail(evaluation))}</span>
+                    </div>
+                    <div class="rank-judge-metrics">${escapeHtml(metrics)}</div>
+                    ${row.reason ? `<div class="rank-judge-text">${escapeHtml(t('judgeReasonLabel', '理由：'))}${escapeHtml(row.reason)}</div>` : ''}
+                    ${evidenceText ? `<div class="rank-judge-text">${escapeHtml(t('judgeEvidenceLabel', '证据：'))}${escapeHtml(evidenceText)}</div>` : ''}
+                </div>
+            `;
+        })
+        .filter(Boolean);
 }
 
-function normalizeEvaluationStatus(status) {
-    const value = String(status || '').trim().toLowerCase();
-    if (value === 'done') return 'done';
-    if (value === 'parse_failed') return 'parse_failed';
-    if (value === 'timeout') return 'timeout';
-    return 'pending';
+function findParsedScoreForCandidate(evaluation, candidateId) {
+    const rows = Array.isArray(evaluation?.parsedScores) ? evaluation.parsedScores : [];
+    return rows.find((row) => {
+        const slot = String(row?.slot || '').trim().toUpperCase();
+        return (evaluation.blindMap || {})[slot] === candidateId;
+    }) || null;
 }
 
-function getEvaluationStatusDetail(evaluation) {
-    const status = normalizeEvaluationStatus(evaluation?.status);
-    const scoreCount = Array.isArray(evaluation?.parsedScores) ? evaluation.parsedScores.length : 0;
-    const evaluationMode = normalizeReviewMode(evaluation?.mode || state.activeRound?.config?.reviewMode);
+function onToggleCandidateDetails(candidateId) {
+    if (!candidateId) return;
+    state.selectedCandidateId = state.selectedCandidateId === candidateId ? null : candidateId;
+    renderResultBoard();
+}
 
-    if (status === 'done') {
-        if (evaluationMode === REVIEW_MODES.discussion) {
-            const raw = String(evaluation?.rawResponse || '').trim();
-            return raw ? `Discussion response captured (${raw.length} chars).` : 'Discussion response captured.';
-        }
+function buildReviewProgress(evaluations) {
+    const done = evaluations.filter((evaluation) => evaluation.status === 'done').length;
+    const failed = evaluations.filter((evaluation) => ['parse_failed', 'timeout'].includes(evaluation.status)).length;
+    return {
+        total: evaluations.length,
+        done,
+        failed,
+        pending: Math.max(0, evaluations.length - done - failed)
+    };
+}
 
-        const normalizedBy = String(evaluation?.normalizedBy || '').trim();
-        if (normalizedBy) {
-            if (normalizedBy === 'deepseek-chat') {
-                return `Parsed ${scoreCount} score item(s). Scores normalized by deepseek-chat; reason/evidence preserved from raw output.`;
-            }
-            return `Parsed ${scoreCount} score item(s). Normalized by ${normalizedBy}.`;
-        }
-        return `Parsed ${scoreCount} score item(s).`;
+function buildJudgeStatusDetail(evaluation) {
+    const status = String(evaluation?.status || '').trim();
+    if (status === 'pending' || status === 'generating') {
+        return t('evalWaiting', '等待评委回复...');
     }
-
-    if (status === 'parse_failed') {
-        const normalizeError = String(evaluation?.normalizeError || '').replace(/\s+/g, ' ').trim();
-        if (normalizeError) {
-            return `Parse failed: ${shorten(normalizeError, 180)}`;
-        }
-        const raw = String(evaluation?.rawResponse || '').replace(/\s+/g, ' ').trim();
-        return raw ? `Parse failed: ${shorten(raw, 140)}` : 'Parse failed: invalid JSON output.';
-    }
-
     if (status === 'timeout') {
-        const raw = String(evaluation?.rawResponse || '').replace(/\s+/g, ' ').trim();
-        return raw ? `Timeout: ${shorten(raw, 140)}` : 'Timeout: no valid response received within the window.';
+        return t('evalTimeoutPrefix', '超时：{0}', [
+            String(evaluation?.normalizeError || t('evalTimeoutDefault', '评审超时')).trim()
+        ]);
+    }
+    if (status === 'parse_failed') {
+        return t('evalParseFailedPrefix', '解析失败：{0}', [
+            truncateText(String(evaluation?.normalizeError || evaluation?.rawResponse || '').trim(), 120)
+        ]);
+    }
+    if (status !== 'done') {
+        return status || t('evalWaiting', '等待评委回复...');
     }
 
-    return 'Waiting for judge response...';
-}
-
-function syncCandidateButtons() {
-    const hasRound = Boolean(state.activeRoundId);
-    document.querySelectorAll('.btn-candidate').forEach((button) => {
-        button.disabled = false;
-        button.title = hasRound ? '' : 'Broadcast first to create a round.';
-    });
-}
-
-function updateCard(model, status, summary) {
-    const cardId = MODEL_CARD_MAP[model] || `card-${String(model || '').toLowerCase()}`;
-    const card = document.getElementById(cardId);
-    if (!card) return;
-
-    const dot = card.querySelector('.status-dot');
-    const statusText = card.querySelector('.status-text');
-    if (dot) {
-        dot.className = 'status-dot';
-        if (status === 'generating') dot.classList.add('thinking');
-        if (status === 'idle') dot.classList.add('active');
-    }
-    if (statusText) {
-        statusText.innerText = status === 'generating' ? 'Generating' : 'Idle';
+    if (normalizeReviewMode(evaluation.mode) === REVIEW_MODES.discussion) {
+        const length = Number(evaluation?.rawSummaryChars || String(evaluation?.rawResponse || '').length || 0);
+        return length > 0
+            ? t('evalDiscussionCapturedWithLength', '已捕获讨论回复（{0} 个字符）。', [length])
+            : t('evalDiscussionCaptured', '已捕获讨论回复。');
     }
 
-    if (summary) {
-        const body = card.querySelector('.card-body');
-        if (body) body.innerText = summary;
+    const itemCount = Array.isArray(evaluation?.parsedScores) ? evaluation.parsedScores.length : 0;
+    if (evaluation?.normalizedBy) {
+        return t('evalParsedScoreItemsDeepseek', '已解析 {0} 条评分，使用 deepseek-chat 做归一化，并保留原始理由与证据。', [
+            itemCount
+        ]);
+    }
+
+    return t('evalParsedScoreItems', '已解析 {0} 条评分。', [itemCount]);
+}
+
+function getJudgeStatusClass(status) {
+    return ['done', 'pending', 'parse_failed', 'timeout'].includes(status) ? status : 'pending';
+}
+
+function getJudgeStatusLabel(status) {
+    switch (String(status || '').trim()) {
+        case 'done':
+            return t('judgeStatusDone', '已完成');
+        case 'parse_failed':
+            return t('judgeStatusParseFailed', '解析失败');
+        case 'timeout':
+            return t('judgeStatusTimeout', '超时');
+        default:
+            return t('judgeStatusPending', '进行中');
     }
 }
 
-function getCheckedValues(selector) {
-    const values = [];
-    document.querySelectorAll(selector).forEach((checkbox) => {
-        if (checkbox.checked && !checkbox.disabled) values.push(checkbox.value);
-    });
-    return values;
+function getRoundStatusLabel(status) {
+    switch (String(status || '').trim()) {
+        case 'collecting':
+            return t('roundStatusCollecting', '收集中');
+        case 'reviewing':
+            return t('roundStatusReviewing', '评审中');
+        case 'completed':
+            return t('roundStatusCompleted', '已完成');
+        case 'failed':
+            return t('roundStatusFailed', '失败');
+        default:
+            return t('roundStatusNone', '无');
+    }
 }
-
-function getModelFromCard(cardId) {
-    const entry = Object.entries(MODEL_CARD_MAP).find(([, id]) => id === cardId);
-    return entry?.[0] || null;
-}
-
-function shorten(text, maxLength) {
-    if (!text) return '';
-    if (text.length <= maxLength) return text;
-    return `${text.slice(0, maxLength)}...`;
-}
-
-function formatScore(value) {
-    const number = Number(value);
-    if (!Number.isFinite(number)) return '0.00';
-    return number.toFixed(2);
-}
-
-function escapeHtml(text) {
-    return String(text || '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
-}
-
-function sendMessage(payload) {
-    return new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage(payload, (response) => {
-            if (chrome.runtime.lastError) {
-                reject(new Error(chrome.runtime.lastError.message));
-                return;
-            }
-            resolve(response);
-        });
-    });
-}
-

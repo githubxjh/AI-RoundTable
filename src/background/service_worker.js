@@ -91,54 +91,109 @@ const DEFAULT_SETTINGS = {
     blindReview: true,
     isolationMode: 'reuse_current_chat',
     reviewPromptTemplate: [
-        'You are a neutral and rigorous evaluator.',
-        'Question:',
+        '你是一名客观中立的评审员。',
+        '问题：',
         '{{question}}',
         '',
-        'Evaluate the following anonymized answers:',
+        '请评估以下匿名答案：',
         '{{answers}}',
         '',
-        'Scoring dimensions (1-10 each): accuracy, completeness, actionability, clarity.',
-        'overall = accuracy*0.4 + completeness*0.25 + actionability*0.2 + clarity*0.15',
+        '评分规则（每个维度 1-10 分）：',
+        '- accuracy（准确性）',
+        '- completeness（完整性）',
+        '- actionability（可执行性）',
+        '- clarity（清晰度）',
         '',
-        'Output one JSON object wrapped with tags:',
+        '请按以下权重计算 overall：',
+        'accuracy=0.4, completeness=0.25, actionability=0.2, clarity=0.15.',
+        '',
+        '只输出一个 JSON 对象，并用以下标签包裹：',
         '<EVAL_JSON>{...}</EVAL_JSON>',
         '',
-        'JSON schema:',
+        'JSON 结构：',
         '{',
         '  "scores": [',
         '    {',
         '      "slot": "A",',
-        '      "accuracy": 8,',
-        '      "completeness": 7,',
-        '      "actionability": 8,',
-        '      "clarity": 9,',
-        '      "overall": 8.0,',
+        '      "accuracy": 1-10,',
+        '      "completeness": 1-10,',
+        '      "actionability": 1-10,',
+        '      "clarity": 1-10,',
+        '      "overall": 1-10,',
         '      "reason": "short reason",',
-        '      "evidence": ["point1", "point2"]',
+        '      "evidence": ["point1","point2"]',
         '    }',
         '  ]',
         '}',
-        'Do not output markdown or any text outside <EVAL_JSON> tags.'
+        '',
+        '不要输出 Markdown。不要在 <EVAL_JSON> 标签外输出任何额外文本。'
     ].join('\n'),
     discussionPromptTemplate: [
-        'You are participating in an AI roundtable discussion.',
-        'Question:',
+        '你将作为圆桌审议成员参与讨论。',
+        '问题：',
         '{{question}}',
         '',
-        'Here are candidate responses from different AIs:',
+        '以下是不同 AI 的候选回答：',
         '{{answers}}',
         '',
-        'Please provide:',
-        '1) your best consolidated answer,',
-        '2) what is still unclear or contested,',
-        '3) up to 3 follow-up questions that could move the discussion forward.',
+        '请完成以下任务：',
+        '1) 给出你的综合回答（可直接改进候选观点）；',
+        '2) 指出你认为仍不清楚或存在分歧的点；',
+        '3) 提出最多 3 个推进讨论的新问题（可选）。',
         '',
-        'No scoring is required. No JSON is required. Reply in natural language.'
+        '注意：本模式不需要打分，不需要输出 JSON，可以直接输出自然语言。'
     ].join('\n'),
     reviewMode: 'scoring',
     labelMode: 'blind'
 };
+
+const LEGACY_REVIEW_TEMPLATE = [
+    'You are a neutral and rigorous evaluator.',
+    'Question:',
+    '{{question}}',
+    '',
+    'Evaluate the following anonymized answers:',
+    '{{answers}}',
+    '',
+    'Scoring dimensions (1-10 each): accuracy, completeness, actionability, clarity.',
+    'overall = accuracy*0.4 + completeness*0.25 + actionability*0.2 + clarity*0.15',
+    '',
+    'Output one JSON object wrapped with tags:',
+    '<EVAL_JSON>{...}</EVAL_JSON>',
+    '',
+    'JSON schema:',
+    '{',
+    '  "scores": [',
+    '    {',
+    '      "slot": "A",',
+    '      "accuracy": 8,',
+    '      "completeness": 7,',
+    '      "actionability": 8,',
+    '      "clarity": 9,',
+    '      "overall": 8.0,',
+    '      "reason": "short reason",',
+    '      "evidence": ["point1", "point2"]',
+    '    }',
+    '  ]',
+    '}',
+    'Do not output markdown or any text outside <EVAL_JSON> tags.'
+].join('\n');
+
+const LEGACY_DISCUSSION_TEMPLATE = [
+    'You are participating in an AI roundtable discussion.',
+    'Question:',
+    '{{question}}',
+    '',
+    'Here are candidate responses from different AIs:',
+    '{{answers}}',
+    '',
+    'Please provide:',
+    '1) your best consolidated answer,',
+    '2) what is still unclear or contested,',
+    '3) up to 3 follow-up questions that could move the discussion forward.',
+    '',
+    'No scoring is required. No JSON is required. Reply in natural language.'
+].join('\n');
 
 const pendingReviewTasks = new Map();
 
@@ -3009,7 +3064,7 @@ function normalizeLabelMode(value) {
 }
 
 function mergeSettings(partial) {
-    return {
+    const merged = {
         ...DEFAULT_SETTINGS,
         ...(partial || {}),
         weights: {
@@ -3017,6 +3072,48 @@ function mergeSettings(partial) {
             ...((partial && partial.weights) || {})
         }
     };
+
+    merged.reviewPromptTemplate = normalizeTemplateSetting(
+        merged.reviewPromptTemplate,
+        DEFAULT_SETTINGS.reviewPromptTemplate,
+        LEGACY_REVIEW_TEMPLATE
+    );
+    merged.discussionPromptTemplate = normalizeTemplateSetting(
+        merged.discussionPromptTemplate,
+        DEFAULT_SETTINGS.discussionPromptTemplate,
+        LEGACY_DISCUSSION_TEMPLATE
+    );
+
+    return merged;
+}
+
+function normalizeTemplateSetting(template, defaultTemplate, legacyTemplate) {
+    const current = String(template || '').trim();
+    if (!current) {
+        return defaultTemplate;
+    }
+
+    if (current === legacyTemplate || looksLikeTemplateCorruption(current)) {
+        return defaultTemplate;
+    }
+
+    return current;
+}
+
+function looksLikeTemplateCorruption(template) {
+    return [
+        '<button id="start-review-btn"',
+        '<div id="review-progress">',
+        '<div id="result-board">',
+        '?/button>',
+        '?/div>',
+        '?/span>',
+        '浣犳',
+        '闂',
+        '璇峰',
+        '鍙',
+        '涓嶈'
+    ].some((fragment) => template.includes(fragment));
 }
 
 function sanitizeWeights(weights) {

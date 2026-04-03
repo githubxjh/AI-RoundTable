@@ -1,0 +1,506 @@
+{
+  "extName": {
+    "message": "AI 圆桌"
+  },
+  "extDescription": {
+    "message": "把浏览器变成多模型协作评审台。"
+  },
+  "panelTitle": {
+    "message": "AI 圆桌"
+  },
+  "sectionGlobalCommand": {
+    "message": "全局提问"
+  },
+  "globalInputPlaceholder": {
+    "message": "输入一个问题，同时发给多个 AI 模型"
+  },
+  "broadcastAddFiles": {
+    "message": "添加文件"
+  },
+  "broadcastClearFiles": {
+    "message": "清空文件"
+  },
+  "broadcastNoFilesSelected": {
+    "message": "尚未选择文件。"
+  },
+  "broadcastDropHint": {
+    "message": "可以粘贴或拖拽文件到这里，最多 3 个文件，每个不超过 5MB。"
+  },
+  "actionBroadcast": {
+    "message": "群发"
+  },
+  "statusIdle": {
+    "message": "空闲"
+  },
+  "statusGenerating": {
+    "message": "生成中"
+  },
+  "waitingForResponse": {
+    "message": "等待响应..."
+  },
+  "actionQuote": {
+    "message": "引用"
+  },
+  "actionAddCandidate": {
+    "message": "加入候选"
+  },
+  "sectionRound": {
+    "message": "轮次"
+  },
+  "actionDeleteRound": {
+    "message": "删除轮次"
+  },
+  "roundLabelId": {
+    "message": "ID"
+  },
+  "roundLabelStatus": {
+    "message": "状态"
+  },
+  "roundLabelCandidates": {
+    "message": "候选"
+  },
+  "roundLabelCreatedAt": {
+    "message": "创建时间"
+  },
+  "roundStatusNone": {
+    "message": "无"
+  },
+  "roundNoActive": {
+    "message": "当前没有活动轮次。"
+  },
+  "roundEmptyQuestion": {
+    "message": "（问题为空）"
+  },
+  "sectionRouter": {
+    "message": "路由器"
+  },
+  "actionClearQuotes": {
+    "message": "清空引用"
+  },
+  "routerQuotesEmpty": {
+    "message": "点击“引用”把回答加入路由器。"
+  },
+  "routerPrimaryGroup": {
+    "message": "主任务"
+  },
+  "routerModifierGroup": {
+    "message": "修饰器"
+  },
+  "routerGeneratedLabel": {
+    "message": "系统生成指令"
+  },
+  "routerGeneratedEmpty": {
+    "message": "先选择一个主任务，再按需叠加修饰器。"
+  },
+  "routerSupplementLabel": {
+    "message": "补充要求"
+  },
+  "routerSupplementPlaceholder": {
+    "message": "补充你的上下文、范围或偏好要求"
+  },
+  "actionRoute": {
+    "message": "开始路由"
+  },
+  "routerPresetLabelRedTeaming": {
+    "message": "找漏洞"
+  },
+  "routerPresetLabelFactCheck": {
+    "message": "核事实"
+  },
+  "routerPresetLabelTradeOff": {
+    "message": "看取舍"
+  },
+  "routerPresetLabelDecision": {
+    "message": "做决策"
+  },
+  "routerPresetLabelMergeDraft": {
+    "message": "合并稿"
+  },
+  "routerPresetLabelBlindSpot": {
+    "message": "补盲区"
+  },
+  "routerPresetLabelKeyQuestions": {
+    "message": "提问题"
+  },
+  "routerPresetLabelExecution": {
+    "message": "要落地"
+  },
+  "routerGeneratedIntro": {
+    "message": "基于上面的引用内容，请完成以下任务："
+  },
+  "routerSupplementPrefix": {
+    "message": "补充要求："
+  },
+  "routerPresetInstructionRedTeaming": {
+    "message": "请站在最严格的审查者视角，指出最关键的漏洞、隐含前提、失败风险和最容易被忽略的问题，并按影响大小排序。"
+  },
+  "routerPresetInstructionFactCheck": {
+    "message": "请核查其中的事实性陈述，明确哪些内容可信、哪些证据不足、哪些可能过时；如果无法确认，请明确说明不确定点。"
+  },
+  "routerPresetInstructionTradeOff": {
+    "message": "请分析不同方案或观点之间的取舍，包括收益、成本、约束、机会成本、二阶影响和适用条件。"
+  },
+  "routerPresetInstructionDecision": {
+    "message": "请基于现有信息给出明确建议，并说明推荐方案、不推荐其他方案的核心原因；如果信息不足，也请说明暂不决策的条件。"
+  },
+  "routerPresetInstructionMergeDraft": {
+    "message": "请吸收各方回答的优点，合并成一个更完整、更可信、更少空话的版本。"
+  },
+  "routerPresetInstructionBlindSpot": {
+    "message": "请补充容易被忽视的盲区、边界条件、利益相关方、异常情况和反例。"
+  },
+  "routerPresetInstructionKeyQuestions": {
+    "message": "如果现在还不能直接下结论，请提出最值得追问的 3 到 5 个关键问题，并说明每个问题能澄清什么风险。"
+  },
+  "routerPresetInstructionExecution": {
+    "message": "请把结论进一步展开成可执行方案，拆成步骤、角色分工、前置依赖、风险点和下一步动作。"
+  },
+  "sectionReview": {
+    "message": "评审"
+  },
+  "actionResetTemplate": {
+    "message": "恢复模板"
+  },
+  "reviewModeLabel": {
+    "message": "模式"
+  },
+  "reviewModeScoring": {
+    "message": "评分评审"
+  },
+  "reviewModeDiscussion": {
+    "message": "讨论评审"
+  },
+  "labelModeLabel": {
+    "message": "标签"
+  },
+  "labelModeBlind": {
+    "message": "匿名（A/B/C/D）"
+  },
+  "labelModeNamed": {
+    "message": "真实模型名"
+  },
+  "judgeModelsLabel": {
+    "message": "评委模型"
+  },
+  "reviewTemplatePlaceholderScoring": {
+    "message": "评分模板（支持 {{question}} 和 {{answers}}）"
+  },
+  "reviewTemplatePlaceholderDiscussion": {
+    "message": "讨论模板（支持 {{question}} 和 {{answers}}）"
+  },
+  "actionStartScoringReview": {
+    "message": "开始评分评审"
+  },
+  "actionStartDiscussionReview": {
+    "message": "开始讨论评审"
+  },
+  "reviewProgressWaiting": {
+    "message": "等待开始评审。"
+  },
+  "judgeTasksEmpty": {
+    "message": "还没有评委任务。"
+  },
+  "resultsEmpty": {
+    "message": "暂无结果。"
+  },
+  "broadcastEnterQuestion": {
+    "message": "请先输入问题再进行群发。"
+  },
+  "broadcastSelectTargetModel": {
+    "message": "请至少选择一个目标模型。"
+  },
+  "broadcasting": {
+    "message": "群发中..."
+  },
+  "broadcastSentCount": {
+    "message": "已发送给 {0} 个模型。"
+  },
+  "broadcastFailedPrefix": {
+    "message": "群发失败：{0}"
+  },
+  "attachmentsCleared": {
+    "message": "已清空附件。"
+  },
+  "sourceSelectedFiles": {
+    "message": "选中文件"
+  },
+  "sourcePastedFiles": {
+    "message": "粘贴文件"
+  },
+  "sourceDroppedFiles": {
+    "message": "拖拽文件"
+  },
+  "noUsableFilesDetected": {
+    "message": "{0}：未检测到可用文件。"
+  },
+  "duplicateFilesConfirm": {
+    "message": "检测到 {0} 个重复文件，仍然保留吗？"
+  },
+  "fileActionAdded": {
+    "message": "已加入 {0} 个文件。"
+  },
+  "fileActionDuplicateKept": {
+    "message": "重复文件已保留：{0} 个。"
+  },
+  "fileActionDuplicateSkipped": {
+    "message": "重复文件已跳过：{0} 个。"
+  },
+  "fileActionTypeRejected": {
+    "message": "类型不支持：{0} 个。"
+  },
+  "fileActionSizeRejected": {
+    "message": "大小不符合限制：{0} 个。"
+  },
+  "fileActionOverflow": {
+    "message": "超出数量上限（最多 {0} 个）：{1} 个。"
+  },
+  "filesQueued": {
+    "message": "{0}已加入待发送队列。"
+  },
+  "filesPartiallyQueued": {
+    "message": "{0}部分加入待发送队列。"
+  },
+  "filesNotQueued": {
+    "message": "{0}未加入待发送队列。"
+  },
+  "tooManyAttachments": {
+    "message": "附件过多，最多允许 {0} 个文件。"
+  },
+  "fileTooLarge": {
+    "message": "文件过大：{0}（最大 {1}）。"
+  },
+  "unsupportedFileType": {
+    "message": "文件类型不支持：{0}。"
+  },
+  "invalidAttachments": {
+    "message": "附件无效，请检查文件大小和类型。"
+  },
+  "broadcastNoSupportedTargets": {
+    "message": "所选模型都不支持当前附件。"
+  },
+  "broadcastSendNotConfirmed": {
+    "message": "消息已注入，但未确认发送，请检查模型页面后重试。"
+  },
+  "broadcastFailedGeneric": {
+    "message": "群发失败。"
+  },
+  "broadcastOutcomeSent": {
+    "message": "已发送 {0} 个模型。"
+  },
+  "broadcastOutcomeDegraded": {
+    "message": "{0} 个模型已降级为纯文本发送（{1}）。"
+  },
+  "broadcastOutcomeSkipped": {
+    "message": "已跳过 {0} 个模型（{1}）。"
+  },
+  "broadcastOutcomeFailed": {
+    "message": "{0} 个模型发送失败（{1}）。"
+  },
+  "candidateDefaultQuestion": {
+    "message": "手动加入候选答案"
+  },
+  "candidateRoundClosedConfirm": {
+    "message": "当前轮次已关闭或正在评审。要为这个候选答案新建一轮吗？"
+  },
+  "candidateSummaryMissing": {
+    "message": "当前模型还没有捕获到可用回答，请等它输出完成后再试。"
+  },
+  "candidateRoundNotFound": {
+    "message": "所选轮次不存在，请刷新后重试。"
+  },
+  "candidateInvalidRequest": {
+    "message": "加入候选时请求无效。"
+  },
+  "candidateAddFailed": {
+    "message": "加入候选失败。"
+  },
+  "candidateDuplicate": {
+    "message": "这条回答已经在当前轮次里了，没有重复加入。"
+  },
+  "candidateAddFailedPrefix": {
+    "message": "加入候选失败：{0}"
+  },
+  "routeNoQuotes": {
+    "message": "请至少引用一个模型回答后再路由。"
+  },
+  "routeNoTargets": {
+    "message": "请至少选择一个路由目标。"
+  },
+  "routeNoPrimary": {
+    "message": "请先选择一个主任务。"
+  },
+  "routePrimaryRequired": {
+    "message": "请先选择主任务，再叠加修饰器。"
+  },
+  "routeModifierLimitReached": {
+    "message": "修饰器最多只能选择 {0} 个。"
+  },
+  "routeFailedPrefix": {
+    "message": "路由失败：{0}"
+  },
+  "routeReferencePrefix": {
+    "message": "参考 {0} / {1}"
+  },
+  "reviewNoRound": {
+    "message": "当前没有活动轮次，请先群发创建一轮。"
+  },
+  "reviewRestartConfirm": {
+    "message": "当前评审仍在进行中，重新开始会覆盖未完成结果。要继续吗？"
+  },
+  "reviewDiscussionMinCandidates": {
+    "message": "讨论评审至少需要 1 个候选答案。"
+  },
+  "reviewScoringMinCandidates": {
+    "message": "评分评审至少需要 2 个候选答案。"
+  },
+  "reviewSelectJudge": {
+    "message": "请至少选择一个评委模型。"
+  },
+  "reviewLowJudgeCountConfirm": {
+    "message": "评分评审少于 2 个评委时结果可能不稳定。要继续吗？"
+  },
+  "reviewNoCandidateAnswer": {
+    "message": "当前轮次还没有可用候选答案，请先加入候选。"
+  },
+  "reviewStartFailed": {
+    "message": "启动评审失败。"
+  },
+  "reviewStartFailedPrefix": {
+    "message": "启动评审失败：{0}"
+  },
+  "deleteRoundNoActive": {
+    "message": "当前没有可删除的活动轮次。"
+  },
+  "deleteRoundConfirm": {
+    "message": "确定删除当前轮次吗？此操作无法撤销。"
+  },
+  "deleteRoundFailedPrefix": {
+    "message": "删除轮次失败：{0}"
+  },
+  "reviewHasNotStarted": {
+    "message": "评审尚未开始。"
+  },
+  "reviewProgressSummary": {
+    "message": "已完成 {0} / 失败 {1} / 等待中 {2}"
+  },
+  "judgeStatusPending": {
+    "message": "等待中"
+  },
+  "judgeStatusDone": {
+    "message": "已完成"
+  },
+  "judgeStatusParseFailed": {
+    "message": "解析失败"
+  },
+  "judgeStatusTimeout": {
+    "message": "超时"
+  },
+  "unknownModel": {
+    "message": "未知模型"
+  },
+  "resultNoRanking": {
+    "message": "暂无排名结果。"
+  },
+  "resultNoCompletedJudge": {
+    "message": "评委尚未完成有效评分。"
+  },
+  "resultReasonsPrefix": {
+    "message": "评委摘要：{0}"
+  },
+  "resultExpandHint": {
+    "message": "点击展开评委明细"
+  },
+  "resultCollapseHint": {
+    "message": "点击收起评委明细"
+  },
+  "resultFinalScoreLabel": {
+    "message": "最终分"
+  },
+  "resultRawLabel": {
+    "message": "原始"
+  },
+  "resultNormalizedLabel": {
+    "message": "归一化"
+  },
+  "resultNonSelfLabel": {
+    "message": "非自评"
+  },
+  "resultVarianceLabel": {
+    "message": "方差"
+  },
+  "discussionResultEmpty": {
+    "message": "暂无讨论结果。"
+  },
+  "discussionResponseMissing": {
+    "message": "[未捕获到讨论内容]"
+  },
+  "discussionStatusLabel": {
+    "message": "状态"
+  },
+  "judgeDetailsEmpty": {
+    "message": "暂无评委明细记录。"
+  },
+  "judgeReasonLabel": {
+    "message": "理由："
+  },
+  "judgeEvidenceLabel": {
+    "message": "证据："
+  },
+  "evalDiscussionCapturedWithLength": {
+    "message": "已捕获讨论回复（{0} 个字符）。"
+  },
+  "evalDiscussionCaptured": {
+    "message": "已捕获讨论回复。"
+  },
+  "evalParsedScoreItems": {
+    "message": "已解析 {0} 条评分。"
+  },
+  "evalParsedScoreItemsNormalizedBy": {
+    "message": "已解析 {0} 条评分，归一化模型：{1}。"
+  },
+  "evalParsedScoreItemsDeepseek": {
+    "message": "已解析 {0} 条评分，使用 deepseek-chat 做归一化，并保留原始理由与证据。"
+  },
+  "evalParseFailedPrefix": {
+    "message": "解析失败：{0}"
+  },
+  "evalParseFailedInvalidJson": {
+    "message": "解析失败：输出不是有效 JSON。"
+  },
+  "evalTimeoutPrefix": {
+    "message": "超时：{0}"
+  },
+  "evalTimeoutDefault": {
+    "message": "在规定时间内没有拿到有效回复。"
+  },
+  "evalWaiting": {
+    "message": "等待评委回复..."
+  },
+  "candidateButtonTitleNoRound": {
+    "message": "请先群发创建轮次。"
+  },
+  "routeSentCount": {
+    "message": "已向 {0} 个模型发起路由。"
+  },
+  "roundDeleted": {
+    "message": "当前轮次已删除。"
+  },
+  "reviewStarted": {
+    "message": "评审任务已经启动。"
+  },
+  "judgeSourceSelf": {
+    "message": "自评"
+  },
+  "roundStatusCollecting": {
+    "message": "收集中"
+  },
+  "roundStatusReviewing": {
+    "message": "评审中"
+  },
+  "roundStatusCompleted": {
+    "message": "已完成"
+  },
+  "roundStatusFailed": {
+    "message": "失败"
+  }
+}
