@@ -10,6 +10,10 @@ class AdapterBase {
         this._sendConfirmTimeoutMs = 3500;
         this._sendConfirmPollMs = 150;
         this._attachmentReadyTimeoutMs = 12000;
+        this._responseWatchdogTimer = null;
+        this._responseWatchdogIntervalMs = 600;
+        this._responseWatchdogMaxMs = 120000;
+        this._responseWatchdogStartedAt = 0;
         
         // Rate limiting state
         this._rate = { mode: 'throttle', interval: 300, leading: true, trailing: true };
@@ -108,6 +112,7 @@ class AdapterBase {
         if (!dispatchState?.skipConfirm) {
             await this.confirmSendTriggered(dispatchState || { inputEl: null, text });
             this.onSendPostProcessing();
+            this.armResponseWatchdog();
         }
         return { status: 'input_simulated' };
     }
@@ -379,6 +384,51 @@ class AdapterBase {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    armResponseWatchdog() {
+        this.disarmResponseWatchdog();
+        this._responseWatchdogStartedAt = Date.now();
+
+        const tick = () => {
+            this._responseWatchdogTimer = null;
+
+            if (!this.shouldKeepResponseWatchdogRunning()) {
+                this.disarmResponseWatchdog();
+                return;
+            }
+
+            if (Date.now() - this._responseWatchdogStartedAt > this._responseWatchdogMaxMs) {
+                console.warn(`[${this.modelName}] response watchdog timed out after ${this._responseWatchdogMaxMs}ms`);
+                this.disarmResponseWatchdog();
+                return;
+            }
+
+            try {
+                this.checkForNewResponse();
+            } catch (error) {
+                console.warn(`[${this.modelName}] response watchdog check failed`, error);
+            }
+
+            if (!this.shouldKeepResponseWatchdogRunning()) {
+                this.disarmResponseWatchdog();
+                return;
+            }
+
+            this._responseWatchdogTimer = setTimeout(tick, this._responseWatchdogIntervalMs);
+        };
+
+        this._responseWatchdogTimer = setTimeout(tick, this._responseWatchdogIntervalMs);
+    }
+
+    disarmResponseWatchdog() {
+        clearTimeout(this._responseWatchdogTimer);
+        this._responseWatchdogTimer = null;
+        this._responseWatchdogStartedAt = 0;
+    }
+
+    shouldKeepResponseWatchdogRunning() {
+        return Boolean(this.isGenerating || this.expectingNewMessage);
+    }
+
     findSendButton() {
         const selector = this.getSendBtnSelector();
         if (!selector) return null;
@@ -520,7 +570,24 @@ class AdapterBase {
             this.checkForNewResponse();
         });
         
-        this.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+        this.observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: [
+                'aria-busy',
+                'aria-disabled',
+                'aria-hidden',
+                'aria-label',
+                'class',
+                'data-testid',
+                'disabled',
+                'hidden',
+                'style',
+                'title'
+            ]
+        });
     }
 
     checkForNewResponse() {
@@ -557,8 +624,13 @@ class AdapterBase {
             mode: mode || 'normal'
         };
 
+        if (status === 'generating' && !this._responseWatchdogTimer) {
+            this.armResponseWatchdog();
+        }
+
         // Guarantee final state delivery immediately
         if (status === 'idle') {
+            this.disarmResponseWatchdog();
             this._actuallySend(payload);
             this._clearRateTimer();
             return;

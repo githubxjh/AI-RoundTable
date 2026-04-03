@@ -9,8 +9,10 @@ import {
 import {
     assertChromePaths,
     buildTestingPaths,
+    copyChromeProfile,
     getLockedProfileSourceFiles,
-    isChromeRunning
+    isChromeRunning,
+    isProfileCopyReady
 } from './lib/playwright_env.mjs';
 
 const paths = buildTestingPaths();
@@ -26,24 +28,35 @@ if (isChromeRunning()) {
     process.exit(1);
 }
 
-const lockedFiles = getLockedProfileSourceFiles(paths.chromeProfileDir);
-if (lockedFiles.length > 0) {
-    console.error('Chrome profile files are still locked. Fully close Chrome before starting the attach-mode test session.');
-    lockedFiles.forEach((filePath) => console.error(`LOCKED ${filePath}`));
-    process.exit(1);
+if (!isProfileCopyReady(paths.automationUserDataDir, paths.automationProfileName)) {
+    const lockedFiles = getLockedProfileSourceFiles(paths.chromeProfileDir);
+    if (lockedFiles.length > 0) {
+        console.error('Chrome profile files are still locked. Fully close Chrome before starting the attach-mode test session.');
+        lockedFiles.forEach((filePath) => console.error(`LOCKED ${filePath}`));
+        process.exit(1);
+    }
+
+    copyChromeProfile({
+        sourceRoot: paths.chromeUserDataSource,
+        sourceProfileName: paths.chromeProfileName,
+        destinationRoot: paths.automationUserDataDir,
+        destinationProfileName: paths.automationProfileName
+    });
+
+    console.log(`Initialized dedicated attach profile: ${paths.automationUserDataDir}`);
 }
 
 const launchArgs = buildChromeLaunchArgs({
     cdpPort: paths.cdpPort,
-    userDataDir: paths.chromeUserDataSource,
-    profileName: paths.chromeProfileName,
+    userDataDir: paths.automationUserDataDir,
+    profileName: paths.automationProfileName,
     startupUrls: DEFAULT_CHROME_START_URLS
 });
 
 const pid = launchChromeProcess(paths.chromeExecutable, launchArgs);
 
 try {
-    await waitForCdpEndpoint(paths.cdpEndpoint, { timeoutMs: 20000 });
+    await waitForCdpEndpoint(paths.cdpEndpoint, { timeoutMs: 30000 });
 } catch (error) {
     console.error('Chrome started, but the debugging endpoint did not become ready.');
     console.error(error instanceof Error ? error.message : String(error));
@@ -51,20 +64,21 @@ try {
 }
 
 const extensionMatch = findRepoExtensionIdInProfile({
-    preferencesPath: paths.chromePreferencesPath,
-    securePreferencesPath: paths.chromeSecurePreferencesPath,
+    preferencesPath: paths.automationPreferencesPath,
+    securePreferencesPath: paths.automationSecurePreferencesPath,
     repoRoot: paths.repoRoot
 });
 
 console.log(`Started Chrome test session (pid=${pid}) on ${paths.cdpEndpoint}`);
-console.log(`Profile: ${paths.chromeProfileName}`);
-console.log('Chrome opened with your normal profile so Google and GPT login can happen in the real browser.');
+console.log(`Attach profile root: ${paths.automationUserDataDir}`);
+console.log(`Attach profile name: ${paths.automationProfileName}`);
+console.log('Chrome opened with the dedicated persistent test profile so Google and GPT login can be reused across runs.');
 
 if (extensionMatch?.extensionId) {
     console.log(`Detected AI RoundTable unpacked extension: ${extensionMatch.extensionId}`);
 } else {
     console.log(buildMissingExtensionMessage({
-        profileName: paths.chromeProfileName,
+        profileName: `${paths.automationProfileName} @ ${paths.automationUserDataDir}`,
         repoRoot: paths.repoRoot
     }));
 }

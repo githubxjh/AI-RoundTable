@@ -38,6 +38,8 @@ const DEEPSEEK_TIMEOUT_MS = 25000;
 const IDLE_STABILIZE_MS = 1500;
 const IDLE_MIN_CHARS = 80;
 const IDLE_MAX_WAIT_MS = 12000;
+const MODEL_STATE_IDLE_FALLBACK_MS = 4000;
+const MODEL_STATE_IDLE_FALLBACK_MODELS = new Set(['ChatGPT']);
 const BROADCAST_MAX_ATTACHMENTS = 3;
 const BROADCAST_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const BROADCAST_ALLOWED_MIME = new Set([
@@ -196,6 +198,7 @@ const LEGACY_DISCUSSION_TEMPLATE = [
 ].join('\n');
 
 const pendingReviewTasks = new Map();
+const pendingModelStateIdleFallbacks = new Map();
 
 function logReviewTrace(stage, task, extra) {
     const summary = `roundId=${task?.roundId || '-'} evaluationId=${task?.evaluationId || '-'} requestId=${task?.requestId || '-'} judgeModel=${task?.judgeModel || '-'}`;
@@ -598,12 +601,13 @@ async function updateModelState(message, sender) {
     const current = await chrome.storage.local.get(RT_KEYS.modelState);
     const modelState = current[RT_KEYS.modelState] || {};
     const previous = modelState[message.model] || {};
+    const updatedAt = Date.now();
 
     modelState[message.model] = {
         ...previous,
         status: message.status,
         lastSummary: message.summary || previous.lastSummary || '',
-        updatedAt: Date.now(),
+        updatedAt,
         tabId: sender?.tab?.id ?? previous.tabId ?? null,
         sourceUrl: sender?.tab?.url ?? previous.sourceUrl ?? null,
         requestId: message.requestId || null,
@@ -611,6 +615,70 @@ async function updateModelState(message, sender) {
     };
 
     await chrome.storage.local.set({ [RT_KEYS.modelState]: modelState });
+    scheduleModelStateIdleFallback({
+        model: message.model,
+        status: message.status,
+        summary: modelState[message.model].lastSummary,
+        requestId: modelState[message.model].requestId,
+        mode: modelState[message.model].mode,
+        updatedAt
+    });
+}
+
+function clearModelStateIdleFallback(model) {
+    const timerId = pendingModelStateIdleFallbacks.get(model);
+    if (!timerId) return;
+    clearTimeout(timerId);
+    pendingModelStateIdleFallbacks.delete(model);
+}
+
+function scheduleModelStateIdleFallback({
+    model,
+    status,
+    summary,
+    requestId,
+    mode,
+    updatedAt
+} = {}) {
+    clearModelStateIdleFallback(model);
+
+    const trimmedSummary = String(summary || '').trim();
+    if (!MODEL_STATE_IDLE_FALLBACK_MODELS.has(model)) return;
+    if (String(status || '').trim() !== 'generating') return;
+    if (!trimmedSummary) return;
+
+    const timerId = setTimeout(async () => {
+        try {
+            const current = await chrome.storage.local.get(RT_KEYS.modelState);
+            const modelState = current[RT_KEYS.modelState] || {};
+            const latest = modelState[model];
+            if (!latest) return;
+            if (String(latest.status || '').trim() !== 'generating') return;
+            if (Number(latest.updatedAt || 0) !== Number(updatedAt || 0)) return;
+            if (String(latest.lastSummary || '').trim() !== trimmedSummary) return;
+
+            modelState[model] = {
+                ...latest,
+                status: 'idle',
+                updatedAt: Date.now()
+            };
+            await chrome.storage.local.set({ [RT_KEYS.modelState]: modelState });
+
+            await handleReviewStatus({
+                model,
+                status: 'idle',
+                summary: latest.lastSummary,
+                requestId: requestId || latest.requestId || null,
+                mode: mode || latest.mode || 'normal'
+            });
+        } catch (error) {
+            console.error('Model state idle fallback error:', error);
+        } finally {
+            clearModelStateIdleFallback(model);
+        }
+    }, MODEL_STATE_IDLE_FALLBACK_MS);
+
+    pendingModelStateIdleFallbacks.set(model, timerId);
 }
 
 async function handleRoundCreate(message) {

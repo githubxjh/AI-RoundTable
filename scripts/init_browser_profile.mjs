@@ -18,9 +18,9 @@ if (missing.length > 0) {
     process.exit(1);
 }
 
-const destinationDefaultDir = path.join(paths.automationUserDataDir, 'Default');
+const destinationDefaultDir = paths.automationProfileDir;
 if (fs.existsSync(destinationDefaultDir) && !force) {
-    if (isProfileCopyReady(paths.automationUserDataDir)) {
+    if (isProfileCopyReady(paths.automationUserDataDir, paths.automationProfileName)) {
         console.log(`Persistent test profile already exists: ${paths.automationUserDataDir}`);
         console.log('Reuse it for live runs. Pass --force only when you want to rebuild it.');
         process.exit(0);
@@ -38,9 +38,12 @@ if (lockedFiles.length > 0) {
 
 copyChromeProfile({
     sourceRoot: paths.chromeUserDataSource,
+    sourceProfileName: paths.chromeProfileName,
     destinationRoot: paths.automationUserDataDir,
+    destinationProfileName: paths.automationProfileName,
     force
 });
 
 console.log(`Initialized persistent test profile: ${paths.automationUserDataDir}`);
 console.log(`Copied from Chrome profile: ${paths.profileSourceDir}`);
+console.log(`Prepared automation profile directory: ${paths.automationProfileDir}`);

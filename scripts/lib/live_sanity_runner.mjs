@@ -135,8 +135,12 @@ async function runLiveCheckForModel({
         }
 
         const snapshot = settled.snapshot;
-        await captureArtifact(targetPage, path.join(artifactDir, `${safeName}.png`));
-        await captureArtifact(panelPage, path.join(artifactDir, `${safeName}-panel.png`));
+        await captureArtifact(targetPage, path.join(artifactDir, `${safeName}.png`)).catch((error) => {
+            logger.warn(`live:${safeName}:artifact-target ${String(error?.message || error)}`);
+        });
+        await captureArtifact(panelPage, path.join(artifactDir, `${safeName}-panel.png`)).catch((error) => {
+            logger.warn(`live:${safeName}:artifact-panel ${String(error?.message || error)}`);
+        });
         return buildLiveResult({
             model,
             status: LIVE_RESULT_STATUS.ok,

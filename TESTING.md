@@ -23,10 +23,10 @@
 
 1. 先关闭正在运行的 Chrome
 2. 运行 `test:chrome:launch`
-3. 脚本会用你的真实 Chrome `Default` Profile 重启浏览器，并打开 remote debugging
+3. 脚本会用真实 Chrome 打开一个专用持久化测试 profile，并开启 remote debugging
 4. Playwright 再用 `connectOverCDP()` 附着这一个真实 Chrome
 
-这样 Google / GPT 登录都发生在正常 Chrome 里，不再和自动化浏览器冲突。
+这样 Google / GPT 登录仍然发生在真实 Chrome 里，但使用的是一个独立的长期复用 profile，不再触发 Chrome 136 对默认 user data dir 的限制。
 
 ## 一次性准备
 
@@ -37,7 +37,11 @@
 3. `Load unpacked`
 4. 选择当前仓库根目录
 
-因为复用的是你的日常 `Default` Profile，这个加载状态会保留，不需要每次重装。
+这个专用 profile 默认放在：
+
+- `tools/browser-profile/chrome-user-data`
+
+它会长期复用，不需要每次重装或重新登录。
 
 ## 推荐日常流程
 
@@ -111,7 +115,7 @@ Windows 双击 / 命令行友好入口：
 
 1. 登录态过期
 2. 你手动退出了某个站点
-3. 你主动重置或更换了 Chrome `Default` Profile
+3. 你主动删除、重建或更换了 `tools/browser-profile/chrome-user-data`
 
 ## bundled chromium 回退链路
 
@@ -170,7 +174,7 @@ cmd /c npm.cmd run test:chrome:launch
 
 ### 提示扩展没有加载
 
-说明当前 `Default` Profile 里还没有把这个仓库作为 unpacked extension 加进去。
+说明当前专用 attach profile 里还没有把这个仓库作为 unpacked extension 加进去。
 去 `chrome://extensions` 手动 `Load unpacked` 一次即可。
 
 ### PowerShell 拦截 npm.ps1

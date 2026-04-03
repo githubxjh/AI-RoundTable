@@ -6,6 +6,7 @@ import {
 } from './lib/live_workflow.mjs';
 import {
     attachContextDiagnostics,
+    assertProfileReady,
     clearExtensionStorage,
     closeBrowserQuietly,
     connectToChromeOverCdp,
@@ -51,9 +52,10 @@ try {
     if (ignoredFlags.length > 0) {
         logger.warn(`live:attach ignores flags ${ignoredFlags.join(',')}`);
     }
+    assertProfileReady(paths.automationUserDataDir);
 
     logger.log(
-        `live:start backend=${LIVE_BACKEND.attach} cdp=${paths.cdpEndpoint} models=${requestedModels.join(',')}`
+        `live:start backend=${LIVE_BACKEND.attach} cdp=${paths.cdpEndpoint} attachProfile=${paths.automationUserDataDir} models=${requestedModels.join(',')}`
     );
 
     const playwright = await importPlaywright();
@@ -71,9 +73,9 @@ try {
     const extensionId = await resolveAttachedExtensionId({
         context,
         repoRoot: paths.repoRoot,
-        profileName: paths.chromeProfileName,
-        preferencesPath: paths.chromePreferencesPath,
-        securePreferencesPath: paths.chromeSecurePreferencesPath
+        profileName: `${paths.automationProfileName} @ ${paths.automationUserDataDir}`,
+        preferencesPath: paths.automationPreferencesPath,
+        securePreferencesPath: paths.automationSecurePreferencesPath
     });
     logger.log(`live:extension-id ${extensionId}`);
 

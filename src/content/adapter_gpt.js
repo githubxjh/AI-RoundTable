@@ -205,6 +205,17 @@ class ChatGPTAdapter extends AdapterBase {
         return '';
     }
 
+    looksLikeStreamingTail(text) {
+        return /(?:_|\u2026|\.{3}|\u258c|\u258d|\u258e|\u258f)$/.test(String(text || '').trim());
+    }
+
+    finalizeIdle(currentText) {
+        this.isGenerating = false;
+        this.lastGeneratingSummary = '';
+        this.lastSentContent = currentText;
+        this.sendUpdate('idle', currentText);
+    }
+
     onSendPostProcessing() {
         this.previousContent = this.getLastAssistantText();
         this.lastResponseLength = 0;
@@ -244,9 +255,13 @@ class ChatGPTAdapter extends AdapterBase {
             this.expectingNewMessage = false;
         }
 
+        const previousStableText = this.stableText;
         if (currentText !== this.stableText) {
             this.stableText = currentText;
             this.stableTicks = 1;
+            if (previousStableText && !this.looksLikeStreamingTail(currentText)) {
+                this.finalizeIdle(currentText);
+            }
             return;
         }
 
@@ -254,9 +269,7 @@ class ChatGPTAdapter extends AdapterBase {
         if (this.stableTicks < 2) return;
         if (currentText === this.lastSentContent && !this.isGenerating) return;
 
-        this.isGenerating = false;
-        this.lastSentContent = currentText;
-        this.sendUpdate('idle', currentText);
+        this.finalizeIdle(currentText);
     }
 }
 

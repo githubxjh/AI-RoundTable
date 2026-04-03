@@ -150,6 +150,20 @@ export async function resolveAttachedExtensionId({
         return new URL(byWorker.url()).host;
     }
 
+    const byPage = context.pages().find((page) => {
+        const rawUrl = String(page.url() || '').trim();
+        if (!rawUrl.startsWith('chrome-extension://')) return false;
+        try {
+            const parsed = new URL(rawUrl);
+            return parsed.pathname === '/src/sidepanel/panel.html';
+        } catch {
+            return false;
+        }
+    });
+    if (byPage) {
+        return new URL(byPage.url()).host;
+    }
+
     const fromProfile = findRepoExtensionIdInProfile({
         preferencesPath,
         securePreferencesPath,

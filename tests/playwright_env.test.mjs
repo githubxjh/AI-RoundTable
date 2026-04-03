@@ -65,6 +65,19 @@ runTest('default testing paths target repo-local output and browser-profile dire
         paths.automationUserDataDir,
         path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data')
     );
+    assert.equal(paths.automationProfileName, 'Default');
+    assert.equal(
+        paths.automationProfileDir,
+        path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data', 'Default')
+    );
+    assert.equal(
+        paths.automationPreferencesPath,
+        path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data', 'Default', 'Preferences')
+    );
+    assert.equal(
+        paths.automationSecurePreferencesPath,
+        path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data', 'Default', 'Secure Preferences')
+    );
     assert.equal(
         paths.smokeUserDataDir,
         path.join(repoRoot, 'output', 'playwright', 'smoke-user-data')
@@ -96,6 +109,8 @@ runTest('explicit environment overrides win over defaults', () => {
     assert.equal(paths.chromeProfileName, 'Profile 7');
     assert.equal(paths.profileSourceDir, 'D:\\Profiles\\Chrome User Data\\Profile 7');
     assert.equal(paths.automationUserDataDir, 'D:\\Automation\\AI RoundTable Profile');
+    assert.equal(paths.automationProfileName, 'Default');
+    assert.equal(paths.automationProfileDir, 'D:\\Automation\\AI RoundTable Profile\\Default');
     assert.equal(paths.cdpPort, 9333);
     assert.equal(paths.cdpEndpoint, 'http://127.0.0.1:9333');
 });

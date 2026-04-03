@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 const DEFAULT_CHROME_EXECUTABLE = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const DEFAULT_CDP_PORT = 9222;
 const DEFAULT_CHROME_PROFILE_NAME = 'Default';
+const DEFAULT_AUTOMATION_PROFILE_NAME = 'Default';
 const PROFILE_CACHE_BLOCKLIST = [
     'cache',
     'cache_data',
@@ -49,6 +50,8 @@ export function buildTestingPaths({ repoRoot = process.cwd(), env = process.env 
         path.join(resolvedRepoRoot, 'tools', 'browser-profile', 'chrome-user-data'),
         resolvedRepoRoot
     );
+    const automationProfileName = DEFAULT_AUTOMATION_PROFILE_NAME;
+    const automationProfileDir = path.join(automationUserDataDir, automationProfileName);
     const artifactDir = path.join(resolvedRepoRoot, 'output', 'playwright');
     const cdpPort = normalizeCdpPort(env.AI_RT_CDP_PORT, DEFAULT_CDP_PORT);
 
@@ -64,6 +67,10 @@ export function buildTestingPaths({ repoRoot = process.cwd(), env = process.env 
         chromePreferencesPath: path.join(chromeProfileDir, 'Preferences'),
         chromeSecurePreferencesPath: path.join(chromeProfileDir, 'Secure Preferences'),
         automationUserDataDir,
+        automationProfileName,
+        automationProfileDir,
+        automationPreferencesPath: path.join(automationProfileDir, 'Preferences'),
+        automationSecurePreferencesPath: path.join(automationProfileDir, 'Secure Preferences'),
         smokeUserDataDir: path.join(artifactDir, 'smoke-user-data'),
         artifactDir,
         cdpPort,
@@ -100,7 +107,13 @@ export function resetDir(targetPath) {
     fs.mkdirSync(targetPath, { recursive: true });
 }
 
-export function copyChromeProfile({ sourceRoot, destinationRoot, force = false } = {}) {
+export function copyChromeProfile({
+    sourceRoot,
+    sourceProfileName = DEFAULT_CHROME_PROFILE_NAME,
+    destinationRoot,
+    destinationProfileName = DEFAULT_AUTOMATION_PROFILE_NAME,
+    force = false
+} = {}) {
     if (!sourceRoot || !destinationRoot) {
         throw new Error('sourceRoot and destinationRoot are required');
     }
@@ -119,11 +132,11 @@ export function copyChromeProfile({ sourceRoot, destinationRoot, force = false }
         }
     }
 
-    const sourceDefaultDir = path.join(sourceRoot, 'Default');
-    const destinationDefaultDir = path.join(destinationRoot, 'Default');
-    ensureDir(destinationDefaultDir);
+    const sourceProfileDir = path.join(sourceRoot, sourceProfileName);
+    const destinationProfileDir = path.join(destinationRoot, destinationProfileName);
+    ensureDir(destinationProfileDir);
 
-    copyDirectoryFiltered(sourceDefaultDir, destinationDefaultDir, 'Default');
+    copyDirectoryFiltered(sourceProfileDir, destinationProfileDir, destinationProfileName);
 }
 
 export function assertChromePaths(paths) {
@@ -153,13 +166,13 @@ export function isChromeRunning() {
     }
 }
 
-export function getLockedProfileSourceFiles(profileSourceDir) {
+export function getLockedProfileSourceFiles(profileDir) {
     const probePaths = [
-        path.join(profileSourceDir, 'Network', 'Cookies'),
-        path.join(profileSourceDir, 'Cookies'),
-        path.join(profileSourceDir, 'Web Data'),
-        path.join(profileSourceDir, 'History'),
-        path.join(profileSourceDir, 'Login Data')
+        path.join(profileDir, 'Network', 'Cookies'),
+        path.join(profileDir, 'Cookies'),
+        path.join(profileDir, 'Web Data'),
+        path.join(profileDir, 'History'),
+        path.join(profileDir, 'Login Data')
     ];
 
     return probePaths.filter((probePath) => {
@@ -176,17 +189,18 @@ export function getLockedProfileSourceFiles(profileSourceDir) {
     });
 }
 
-export function isProfileCopyReady(profileRoot) {
+export function isProfileCopyReady(profileRoot, profileName = DEFAULT_AUTOMATION_PROFILE_NAME) {
+    const profileDir = path.join(profileRoot, profileName);
     const expected = [
         path.join(profileRoot, 'Local State'),
-        path.join(profileRoot, 'Default'),
-        path.join(profileRoot, 'Default', 'Preferences')
+        profileDir,
+        path.join(profileDir, 'Preferences')
     ];
 
     const criticalUserData = [
-        path.join(profileRoot, 'Default', 'Network', 'Cookies'),
-        path.join(profileRoot, 'Default', 'Cookies'),
-        path.join(profileRoot, 'Default', 'Login Data')
+        path.join(profileDir, 'Network', 'Cookies'),
+        path.join(profileDir, 'Cookies'),
+        path.join(profileDir, 'Login Data')
     ];
 
     return expected.every((targetPath) => fs.existsSync(targetPath))
