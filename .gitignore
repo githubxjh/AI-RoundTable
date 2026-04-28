@@ -2,3 +2,4 @@ node_modules/
 .npm-cache/
 output/playwright/
 tools/browser-profile/chrome-user-data/
+.claude/settings.local.json

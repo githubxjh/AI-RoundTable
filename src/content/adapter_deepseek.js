@@ -19,6 +19,52 @@ class DeepSeekAdapter extends AdapterBase {
         ].join(', ');
     }
 
+    getAttachmentInputSelector() {
+        return [
+            'input[type="file"][accept*="image"]',
+            'input[type="file"][accept*=".pdf"]',
+            'input[type="file"][accept*=".txt"]',
+            'input[type="file"][accept*=".doc"]',
+            'input[type="file"]'
+        ].join(', ');
+    }
+
+    getAttachmentBusySelectors() {
+        return [
+            '[class*="uploading"]',
+            '[class*="upload-progress"]',
+            '[class*="loading"]',
+            '[aria-busy="true"]',
+            '[role="progressbar"]',
+            '[class*="progress"]'
+        ];
+    }
+
+    getAttachmentReadySelectors() {
+        return [
+            '[class*="file-preview"]',
+            '[class*="attachment-preview"]',
+            '[class*="file-item"]',
+            '[class*="upload-file-item"]',
+            '[class*="file-card"]',
+            '[class*="preview"]'
+        ];
+    }
+
+    async openAttachmentUIIfNeeded() {
+        // Intentionally empty — attachment upload is handled entirely in attachFiles override.
+    }
+
+    async attachFiles(_attachments) {
+        // DeepSeek's upload button requires a trusted user gesture (isTrusted=true) to open
+        // the native file picker. Programmatic JS events can't satisfy this constraint.
+        // Gracefully signal unsupported so the service worker degrades to text-only.
+        throw this.createAttachmentError(
+            'attachment_input_not_found',
+            'DeepSeek requires a native user gesture for file upload (not supported in automated mode)'
+        );
+    }
+
     async handleInput(text) {
         const inputSelector = this.getInputSelector();
         const inputEl = await this.waitForElement(inputSelector);

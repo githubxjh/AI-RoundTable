@@ -104,7 +104,9 @@ class AdapterBase {
         const text = String(payload?.text || '');
         const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
 
-        if (attachments.length > 0) {
+        this._hasAttachments = attachments.length > 0;
+
+        if (this._hasAttachments) {
             await this.attachFiles(attachments);
         }
 
@@ -118,25 +120,48 @@ class AdapterBase {
     }
 
     async attachFiles(attachments) {
+        const diag = { steps: [], fileCount: attachments.length, startTime: Date.now() };
         try {
+            diag.steps.push('open_ui_start');
             await this.openAttachmentUIIfNeeded();
+            diag.steps.push('open_ui_done');
 
+            diag.steps.push('find_input_start');
             const inputEl = await this.findAttachmentInput();
             if (!inputEl) {
+                this._logDiag('attachFiles', { ...diag, error: 'input_not_found' });
                 throw this.createAttachmentError(
                     'attachment_input_not_found',
                     'File input was not found on this model page'
                 );
             }
+            diag.steps.push('find_input_done');
+            diag.inputSelector = this.getAttachmentInputSelector();
+            diag.inputVisible = this.isElementVisible(inputEl);
 
             const files = attachments.map((item) => this.decodeBase64ToFile(item));
             if (files.length === 0) {
+                this._logDiag('attachFiles', { ...diag, error: 'no_valid_files' });
                 throw this.createAttachmentError('attachment_upload_failed', 'No valid attachments to upload');
             }
+            diag.fileNames = files.map((f) => f.name);
 
+            diag.steps.push('set_files_start');
             await this.setInputFiles(inputEl, files);
+            diag.steps.push('set_files_done');
+            diag.filesAccepted = Number(inputEl?.files?.length || 0);
+
+            diag.steps.push('wait_ready_start');
             await this.waitAttachmentReady(inputEl, files);
+            diag.steps.push('wait_ready_done');
+            diag.totalMs = Date.now() - diag.startTime;
+            this._logDiag('attachFiles', diag);
         } catch (error) {
+            diag.steps.push('error');
+            diag.error = error?.message || String(error);
+            diag.code = error?.code || 'unknown';
+            diag.totalMs = Date.now() - diag.startTime;
+            this._logDiag('attachFiles', diag);
             if (String(error?.code || '').startsWith('attachment_')) {
                 throw error;
             }
@@ -145,6 +170,24 @@ class AdapterBase {
                 error?.message || 'Attachment upload failed'
             );
         }
+    }
+
+    _logDiag(step, data = {}) {
+        const entry = {
+            ts: Date.now(),
+            model: this.modelName,
+            step,
+            ...data
+        };
+        console.log(`[AIRoundTable|${this.modelName}|${step}]`, JSON.stringify(entry));
+        try {
+            chrome.storage.local.get('rt_attachment_diag', (result) => {
+                const diags = result?.rt_attachment_diag || [];
+                diags.push(entry);
+                if (diags.length > 80) diags.splice(0, diags.length - 80);
+                chrome.storage.local.set({ rt_attachment_diag: diags });
+            });
+        } catch (e) { /* storage unavailable */ }
     }
 
     createAttachmentError(code, message) {
@@ -224,13 +267,16 @@ class AdapterBase {
         const busySelectors = this.getAttachmentBusySelectors();
         const readySelectors = this.getAttachmentReadySelectors();
 
-        // If the model exposes no upload-state selectors, keep a short settle window.
-        if (busySelectors.length === 0 && readySelectors.length === 0) {
-            await this.delay(900);
-            return;
+        if (busySelectors.length > 0 || readySelectors.length > 0) {
+            return this._waitAttachmentBySelectors(inputEl, expected, busySelectors, readySelectors);
         }
 
+        return this._waitAttachmentGeneric(inputEl, expected);
+    }
+
+    async _waitAttachmentBySelectors(inputEl, expected, busySelectors, readySelectors) {
         const deadline = Date.now() + this._attachmentReadyTimeoutMs;
+
         while (Date.now() < deadline) {
             const currentAccepted = Number(inputEl?.files?.length || 0);
             if (currentAccepted < expected) {
@@ -242,7 +288,12 @@ class AdapterBase {
 
             const busy = this.hasAnySelector(busySelectors);
             const ready = readySelectors.length === 0 ? true : this.hasAnySelector(readySelectors);
+
             if (!busy && ready) {
+                const sendBtn = this.findSendButton();
+                if (sendBtn && !this.isSendButtonAvailable(sendBtn)) {
+                    continue;
+                }
                 return;
             }
 
@@ -253,6 +304,76 @@ class AdapterBase {
             'attachment_upload_failed',
             'Attachment upload did not become ready in time'
         );
+    }
+
+    async _waitAttachmentGeneric(inputEl, expected) {
+        const deadline = Date.now() + this._attachmentReadyTimeoutMs;
+        let sendBtnWasDisabled = false;
+        let pollCount = 0;
+
+        while (Date.now() < deadline) {
+            pollCount += 1;
+            const currentAccepted = Number(inputEl?.files?.length || 0);
+            if (currentAccepted < expected) {
+                throw this.createAttachmentError(
+                    'attachment_upload_failed',
+                    `Attachment files were rejected by model input (${currentAccepted}/${expected})`
+                );
+            }
+
+            const sendBtn = this.findSendButton();
+
+            if (sendBtn) {
+                const available = this.isSendButtonAvailable(sendBtn);
+                if (!available) {
+                    sendBtnWasDisabled = true;
+                } else if (sendBtnWasDisabled) {
+                    await this.delay(300);
+                    return;
+                }
+            }
+
+            if (pollCount >= 3 && this._detectGenericFilePreview()) {
+                if (!sendBtn || this.isSendButtonAvailable(sendBtn)) {
+                    await this.delay(300);
+                    return;
+                }
+            }
+
+            await this.delay(300);
+        }
+
+        const finalSendBtn = this.findSendButton();
+        if (finalSendBtn && this.isSendButtonAvailable(finalSendBtn)) {
+            await this.delay(500);
+            return;
+        }
+
+        throw this.createAttachmentError(
+            'attachment_upload_failed',
+            'Attachment upload did not become ready in time'
+        );
+    }
+
+    _detectGenericFilePreview() {
+        const candidates = document.querySelectorAll([
+            '[class*="file-preview"]',
+            '[class*="attachment-preview"]',
+            '[class*="preview-thumb"]',
+            '[class*="upload-file"]',
+            '[class*="file-item"]',
+            '[class*="file-tile"]',
+            'img[src^="blob:"]',
+            'img[src^="data:"]'
+        ].join(', '));
+
+        for (const el of candidates) {
+            if (!this.isElementVisible(el)) continue;
+            if (el.tagName === 'BUTTON' || el.closest('button')) continue;
+            if (el.tagName === 'INPUT') continue;
+            return true;
+        }
+        return false;
     }
 
     async waitForExpectedFiles(inputEl, expected, timeoutMs = 3000) {
@@ -301,7 +422,8 @@ class AdapterBase {
         const inputEl = state?.inputEl || null;
         const text = String(state?.text || '');
         const sendButtonBefore = state?.sendButtonBefore || null;
-        const deadline = Date.now() + this._sendConfirmTimeoutMs;
+        const timeoutMs = this._hasAttachments ? Math.max(this._sendConfirmTimeoutMs, 8000) : this._sendConfirmTimeoutMs;
+        const deadline = Date.now() + timeoutMs;
 
         while (Date.now() < deadline) {
             if (this.isGeneratingIndicatorActiveSafe()) {
