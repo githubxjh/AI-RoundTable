@@ -1,22 +1,23 @@
 console.log('AI RoundTable Background Service Worker Loaded');
 
-const MODEL_NAMES = ['ChatGPT', 'Claude', 'Grok', 'Gemini', 'Doubao'];
+const MODEL_NAMES = ['ChatGPT', 'Grok', 'Gemini', 'Doubao', 'DeepSeek'];
+const DISABLED_MODEL_NAMES = new Set(['Claude']);
 const TERMINAL_EVAL_STATUSES = new Set(['done', 'parse_failed', 'timeout']);
 
 let activeTabs = {
     ChatGPT: null,
-    Claude: null,
     Grok: null,
     Gemini: null,
-    Doubao: null
+    Doubao: null,
+    DeepSeek: null
 };
 
 const MODEL_URLS = {
     ChatGPT: 'chatgpt.com',
-    Claude: 'claude.ai',
     Grok: 'grok.com',
     Gemini: 'gemini.google.com',
-    Doubao: 'www.doubao.com/chat/'
+    Doubao: 'www.doubao.com/chat/',
+    DeepSeek: 'chat.deepseek.com'
 };
 
 const RT_KEYS = {
@@ -197,6 +198,40 @@ const LEGACY_DISCUSSION_TEMPLATE = [
     'No scoring is required. No JSON is required. Reply in natural language.'
 ].join('\n');
 
+function isModelDisabled(model) {
+    return DISABLED_MODEL_NAMES.has(String(model || '').trim());
+}
+
+function isEnabledModel(model) {
+    return MODEL_NAMES.includes(String(model || '').trim());
+}
+
+function normalizeEnabledModels(models, fallback = []) {
+    const source = Array.isArray(models) ? models : fallback;
+    const seen = new Set();
+    const normalized = [];
+    for (const item of source) {
+        const model = String(item || '').trim();
+        if (!isEnabledModel(model) || seen.has(model)) continue;
+        seen.add(model);
+        normalized.push(model);
+    }
+    return normalized;
+}
+
+function getRequestedDisabledModels(models) {
+    if (!Array.isArray(models)) return [];
+    return [...new Set(models.map((item) => String(item || '').trim()).filter((model) => isModelDisabled(model)))];
+}
+
+function buildModelDisabledError(model = 'Claude') {
+    return {
+        status: 'error',
+        code: 'model_disabled',
+        message: `Model ${model} is temporarily disabled`
+    };
+}
+
 const pendingReviewTasks = new Map();
 const pendingModelStateIdleFallbacks = new Map();
 
@@ -266,6 +301,13 @@ async function handleMessage(message, sender) {
 }
 
 async function handleStatusUpdate(message, sender) {
+    if (isModelDisabled(message.model)) {
+        return { status: 'ignored', code: 'model_disabled' };
+    }
+    if (!isEnabledModel(message.model)) {
+        return { status: 'ignored', code: 'unknown_model' };
+    }
+
     await ensureRtState();
     await updateModelState(message, sender);
 
@@ -283,25 +325,31 @@ async function discoverTabs() {
 
     activeTabs = {
         ChatGPT: null,
-        Claude: null,
         Grok: null,
         Gemini: null,
-        Doubao: null
+        Doubao: null,
+        DeepSeek: null
     };
 
     tabs.forEach((tab) => {
         if (!tab.url) return;
 
         if (tab.url.includes(MODEL_URLS.ChatGPT)) activeTabs.ChatGPT = tab.id;
-        else if (tab.url.includes(MODEL_URLS.Claude)) activeTabs.Claude = tab.id;
         else if (tab.url.includes('x.com/i/grok') || tab.url.includes('grok.com')) activeTabs.Grok = tab.id;
         else if (tab.url.includes('gemini.google.com') || tab.url.includes('aistudio.google.com')) activeTabs.Gemini = tab.id;
         else if (tab.url.includes('doubao.com/chat') || tab.url.includes('flow-chat.gf.bytedance.net/chat')) activeTabs.Doubao = tab.id;
+        else if (tab.url.includes('chat.deepseek.com')) activeTabs.DeepSeek = tab.id;
     });
 }
 
 async function broadcastMessage(text, targets, attachments = []) {
-    const targetModels = Array.isArray(targets) && targets.length > 0 ? targets : MODEL_NAMES;
+    const hasExplicitTargets = Array.isArray(targets) && targets.length > 0;
+    const requestedTargets = hasExplicitTargets ? targets : MODEL_NAMES;
+    const targetModels = normalizeEnabledModels(requestedTargets);
+    const disabledTargets = getRequestedDisabledModels(hasExplicitTargets ? targets : []);
+    if (targetModels.length === 0 && disabledTargets.length > 0) {
+        return buildModelDisabledError(disabledTargets[0]);
+    }
     const normalizedAttachmentsResult = normalizeBroadcastAttachments(attachments);
     if (!normalizedAttachmentsResult.ok) {
         return {
@@ -318,6 +366,14 @@ async function broadcastMessage(text, targets, attachments = []) {
     const skipped = [];
     const failed = [];
     const results = [];
+
+    disabledTargets.forEach((model) => {
+        skipped.push({
+            model,
+            code: 'model_disabled',
+            reason: `Model ${model} is temporarily disabled`
+        });
+    });
 
     for (const [model, tabId] of Object.entries(activeTabs)) {
         if (!tabId || !targetModels.includes(model)) continue;
@@ -517,11 +573,16 @@ async function routeMessage(message) {
         promptParts.push(`[Reference]\n${message.quote}`.trim());
     }
     const prompt = promptParts.join('\n\n').trim();
-    const targetModels = Array.isArray(message.targets) ? message.targets : [];
+    const rawTargetModels = Array.isArray(message.targets) ? message.targets : [];
+    const disabledTargets = getRequestedDisabledModels(rawTargetModels);
+    const targetModels = normalizeEnabledModels(rawTargetModels);
+    if (rawTargetModels.length > 0 && targetModels.length === 0 && disabledTargets.length > 0) {
+        return buildModelDisabledError(disabledTargets[0]);
+    }
 
     const promises = [];
     for (const [model, tabId] of Object.entries(activeTabs)) {
-        const shouldSend = targetModels.length > 0 ? targetModels.includes(model) : model !== message.source;
+        const shouldSend = targetModels.length > 0 ? targetModels.includes(model) : model !== message.source && isEnabledModel(model);
         if (tabId && shouldSend) {
             promises.push(sendMessageToTab(tabId, { type: 'INPUT_PROMPT', text: prompt, model, mode: 'normal' }));
         }
@@ -532,6 +593,12 @@ async function routeMessage(message) {
 }
 
 async function activateTab(modelName) {
+    if (isModelDisabled(modelName)) {
+        return buildModelDisabledError(modelName);
+    }
+    if (!isEnabledModel(modelName)) {
+        return { status: 'error', message: `Unknown model: ${modelName}` };
+    }
     const tabId = activeTabs[modelName];
     if (!tabId) {
         const url = MODEL_URLS[modelName];
@@ -694,7 +761,7 @@ async function handleRoundCreate(message) {
         roundId,
         question: String(message.question || '').trim(),
         status: 'collecting',
-        targetModels: Array.isArray(message.targetModels) ? [...new Set(message.targetModels)] : [],
+        targetModels: normalizeEnabledModels(message.targetModels),
         candidateIds: [],
         evaluationIds: [],
         ranking: [],
@@ -736,7 +803,10 @@ async function handleRoundAddCandidate(message) {
     if (!model) {
         return { status: 'error', code: 'invalid_request', message: 'model is required' };
     }
-    if (!MODEL_NAMES.includes(model)) {
+    if (isModelDisabled(model)) {
+        return buildModelDisabledError(model);
+    }
+    if (!isEnabledModel(model)) {
         return { status: 'error', code: 'invalid_request', message: `Unknown model: ${model}` };
     }
 
@@ -764,11 +834,7 @@ async function handleRoundAddCandidate(message) {
         }
 
         const question = String(message.questionIfCreate || '').trim() || '\u624b\u52a8\u56de\u5408';
-        const targetModels = [...new Set(
-            (Array.isArray(message.targetModelsIfCreate) ? message.targetModelsIfCreate : [])
-                .map((item) => String(item || '').trim())
-                .filter((item) => MODEL_NAMES.includes(item))
-        )];
+        const targetModels = normalizeEnabledModels(message.targetModelsIfCreate);
 
         const createResp = await handleRoundCreate({
             question,
@@ -897,9 +963,13 @@ async function handleRoundStartReview(message) {
         };
     }
 
-    const judgeModels = [...new Set(Array.isArray(message.judgeModels) ? message.judgeModels : [])]
-        .filter((model) => MODEL_NAMES.includes(model));
+    const rawJudgeModels = Array.isArray(message.judgeModels) ? message.judgeModels : [];
+    const disabledJudgeModels = getRequestedDisabledModels(rawJudgeModels);
+    const judgeModels = normalizeEnabledModels(rawJudgeModels);
     if (judgeModels.length === 0) {
+        if (disabledJudgeModels.length > 0) {
+            return buildModelDisabledError(disabledJudgeModels[0]);
+        }
         return { status: 'error', message: 'At least 1 judge model is required' };
     }
 

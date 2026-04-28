@@ -85,5 +85,5 @@ if (extensionMatch?.extensionId) {
 
 console.log('Next steps:');
 console.log('1. In that Chrome window, confirm AI RoundTable is loaded in chrome://extensions.');
-console.log('2. Log in to Gemini / Doubao / Grok / ChatGPT if needed.');
-console.log('3. Back in this repo, run `npm.cmd run test:live:core` or `test-live-core.cmd`.');
+console.log('2. Log in to Gemini / Doubao / Grok / DeepSeek / ChatGPT if needed.');
+console.log('3. Back in this repo, run `npm.cmd run test:live:core`, `npm.cmd run test:live:deepseek`, or `test-live-core.cmd`.');

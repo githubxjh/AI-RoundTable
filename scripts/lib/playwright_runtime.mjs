@@ -346,14 +346,14 @@ export function getLiveTargetUrl(model) {
     switch (model) {
         case 'ChatGPT':
             return 'https://chatgpt.com/';
-        case 'Claude':
-            return 'https://claude.ai/';
         case 'Grok':
             return 'https://grok.com/';
         case 'Gemini':
             return 'https://gemini.google.com/';
         case 'Doubao':
             return 'https://www.doubao.com/chat/';
+        case 'DeepSeek':
+            return 'https://chat.deepseek.com/';
         default:
             throw new Error(`Unsupported live model: ${model}`);
     }

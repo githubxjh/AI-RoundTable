@@ -187,6 +187,11 @@
             user-select: none;
         }
 
+        .checkbox-label.disabled {
+            color: var(--muted);
+            cursor: not-allowed;
+        }
+
         .btn {
             border: 1px solid transparent;
             border-radius: 8px;
@@ -232,6 +237,25 @@
             border-radius: 8px;
             padding: 8px;
             background: #fff;
+        }
+
+        .ai-card.disabled {
+            border-color: #d1d5db;
+            background: #f9fafb;
+            color: var(--muted);
+        }
+
+        .ai-card.disabled .card-header {
+            cursor: not-allowed;
+        }
+
+        .ai-card.disabled .status-dot {
+            background: #9ca3af;
+            box-shadow: none;
+        }
+
+        .ai-card.disabled .card-body {
+            color: var(--muted);
         }
 
         .card-header {
@@ -330,6 +354,48 @@
             color: #374151;
         }
 
+        .quote-head {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+            padding-right: 18px;
+            flex-wrap: wrap;
+        }
+
+        .quote-tags {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+
+        .quote-tag {
+            border-radius: 999px;
+            padding: 1px 6px;
+            font-size: 10px;
+            font-weight: 700;
+            border: 1px solid transparent;
+        }
+
+        .quote-tag.answer {
+            color: #1d4ed8;
+            background: #dbeafe;
+            border-color: #bfdbfe;
+        }
+
+        .quote-tag.feedback {
+            color: #92400e;
+            background: #fffbeb;
+            border-color: #fcd34d;
+        }
+
+        .quote-tag.generic {
+            color: #475569;
+            background: #f8fafc;
+            border-color: #cbd5e1;
+        }
+
         .quote-close {
             position: absolute;
             right: 6px;
@@ -398,6 +464,19 @@
 
         .router-preview.empty {
             color: #9ca3af;
+        }
+
+        .router-followup {
+            margin-bottom: 8px;
+        }
+
+        .router-followup[hidden] {
+            display: none;
+        }
+
+        .router-followup select {
+            width: 100%;
+            margin-top: 4px;
         }
 
         .inline-actions {
@@ -535,6 +614,21 @@
             font-size: 11px;
         }
 
+        .rank-detail-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 6px;
+            margin-bottom: 2px;
+        }
+
+        .discussion-import-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
         .rank-judge-row {
             border: 1px solid var(--line);
             border-radius: 6px;
@@ -630,10 +724,11 @@
         <div id="broadcast-file-status" class="file-status info" data-i18n="broadcastDropHint">可以粘贴或拖拽文件到这里，最多 3 个文件，每个不超过 5MB。</div>
         <div class="checkbox-row target-selector">
             <label class="checkbox-label"><input type="checkbox" value="ChatGPT" checked>ChatGPT</label>
-            <label class="checkbox-label"><input type="checkbox" value="Claude" checked>Claude</label>
+            <label class="checkbox-label disabled" data-i18n-title="modelDisabledClaude" title="Claude 暂不允许使用"><input type="checkbox" value="Claude" disabled>Claude</label>
             <label class="checkbox-label"><input type="checkbox" value="Grok" checked>Grok</label>
             <label class="checkbox-label"><input type="checkbox" value="Gemini" checked>Gemini</label>
             <label class="checkbox-label"><input type="checkbox" value="Doubao" checked>Doubao</label>
+            <label class="checkbox-label"><input type="checkbox" value="DeepSeek" checked>DeepSeek</label>
         </div>
         <button id="broadcast-btn" class="btn btn-primary" data-i18n="actionBroadcast">群发</button>
     </section>
@@ -642,24 +737,24 @@
         <div class="ai-card" id="card-gpt">
             <div class="card-header">
                 <div class="model-name"><span class="status-dot"></span>ChatGPT</div>
-                <span class="status-text" data-i18n="statusIdle">空闲</span>
+                <span class="status-text" data-i18n="statusDisabled">已禁用</span>
             </div>
-            <div class="card-body" data-i18n="waitingForResponse">等待响应...</div>
+            <div class="card-body" data-i18n="modelDisabledClaude">Claude 暂不允许使用：当前网页自动化可能触发风控或封号风险。</div>
             <div class="card-actions">
                 <button class="btn btn-neutral btn-small btn-quote" data-source="ChatGPT" data-i18n="actionQuote">引用</button>
                 <button class="btn btn-neutral btn-small btn-candidate" data-model="ChatGPT" data-i18n="actionAddCandidate">加入候选</button>
             </div>
         </div>
 
-        <div class="ai-card" id="card-claude">
+        <div class="ai-card disabled" id="card-claude">
             <div class="card-header">
                 <div class="model-name"><span class="status-dot"></span>Claude</div>
                 <span class="status-text" data-i18n="statusIdle">空闲</span>
             </div>
             <div class="card-body" data-i18n="waitingForResponse">等待响应...</div>
             <div class="card-actions">
-                <button class="btn btn-neutral btn-small btn-quote" data-source="Claude" data-i18n="actionQuote">引用</button>
-                <button class="btn btn-neutral btn-small btn-candidate" data-model="Claude" data-i18n="actionAddCandidate">加入候选</button>
+                <button class="btn btn-neutral btn-small btn-quote" data-source="Claude" data-i18n="actionQuote" disabled>引用</button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="Claude" data-i18n="actionAddCandidate" disabled>加入候选</button>
             </div>
         </div>
 
@@ -698,6 +793,17 @@
                 <button class="btn btn-neutral btn-small btn-candidate" data-model="Doubao" data-i18n="actionAddCandidate">加入候选</button>
             </div>
         </div>
+        <div class="ai-card" id="card-deepseek">
+            <div class="card-header">
+                <div class="model-name"><span class="status-dot"></span>DeepSeek</div>
+                <span class="status-text" data-i18n="statusIdle">Idle</span>
+            </div>
+            <div class="card-body" data-i18n="waitingForResponse">Waiting for response...</div>
+            <div class="card-actions">
+                <button class="btn btn-neutral btn-small btn-quote" data-source="DeepSeek" data-i18n="actionQuote">Quote</button>
+                <button class="btn btn-neutral btn-small btn-candidate" data-model="DeepSeek" data-i18n="actionAddCandidate">Add candidate</button>
+            </div>
+        </div>
     </section>
 
     <section id="round-panel" class="panel">
@@ -731,6 +837,7 @@
                 <button class="chip" data-preset-id="trade-off" data-i18n="routerPresetLabelTradeOff">看取舍</button>
                 <button class="chip" data-preset-id="decision" data-i18n="routerPresetLabelDecision">做决策</button>
                 <button class="chip" data-preset-id="merge-draft" data-i18n="routerPresetLabelMergeDraft">合并稿</button>
+                <button class="chip" data-preset-id="respond-review" data-i18n="routerPresetLabelRespondReview">回应评审</button>
             </div>
         </div>
 
@@ -746,15 +853,23 @@
         <div class="small-muted" data-i18n="routerGeneratedLabel">系统生成指令</div>
         <div id="router-preview" class="router-preview empty" data-i18n="routerGeneratedEmpty">先选择一个主任务，再按需叠加修饰器。</div>
 
+        <div id="router-followup-controls" class="router-followup" hidden>
+            <div class="small-muted" data-i18n="routerFollowupSourceLabel">被评对象</div>
+            <select id="router-followup-source">
+                <option value="" data-i18n="routerFollowupSourcePlaceholder">请选择要回给哪个原模型</option>
+            </select>
+        </div>
+
         <div class="small-muted" data-i18n="routerSupplementLabel">补充要求</div>
         <textarea id="router-input" data-i18n-placeholder="routerSupplementPlaceholder" placeholder="补充你的上下文、范围或偏好要求"></textarea>
 
         <div class="checkbox-row router-targets">
             <label class="checkbox-label"><input type="checkbox" value="ChatGPT">ChatGPT</label>
-            <label class="checkbox-label"><input type="checkbox" value="Claude">Claude</label>
+            <label class="checkbox-label disabled" data-i18n-title="modelDisabledClaude" title="Claude 暂不允许使用"><input type="checkbox" value="Claude" disabled>Claude</label>
             <label class="checkbox-label"><input type="checkbox" value="Grok">Grok</label>
             <label class="checkbox-label"><input type="checkbox" value="Gemini">Gemini</label>
             <label class="checkbox-label"><input type="checkbox" value="Doubao">Doubao</label>
+            <label class="checkbox-label"><input type="checkbox" value="DeepSeek">DeepSeek</label>
         </div>
         <button id="route-btn" class="btn btn-neutral" data-i18n="actionRoute">开始路由</button>
     </section>
@@ -785,10 +900,11 @@
         <div class="small-muted" data-i18n="judgeModelsLabel">评委模型</div>
         <div class="checkbox-row judge-targets">
             <label class="checkbox-label"><input type="checkbox" value="ChatGPT" checked>ChatGPT</label>
-            <label class="checkbox-label"><input type="checkbox" value="Claude" checked>Claude</label>
+            <label class="checkbox-label disabled" data-i18n-title="modelDisabledClaude" title="Claude 暂不允许使用"><input type="checkbox" value="Claude" disabled>Claude</label>
             <label class="checkbox-label"><input type="checkbox" value="Grok" checked>Grok</label>
             <label class="checkbox-label"><input type="checkbox" value="Gemini">Gemini</label>
             <label class="checkbox-label"><input type="checkbox" value="Doubao">Doubao</label>
+            <label class="checkbox-label"><input type="checkbox" value="DeepSeek" checked>DeepSeek</label>
         </div>
 
         <textarea id="review-template" data-i18n-placeholder="reviewTemplatePlaceholderScoring" placeholder="评分模板（支持 {{question}} 和 {{answers}}）"></textarea>

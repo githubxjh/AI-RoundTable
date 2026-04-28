@@ -88,6 +88,7 @@ cmd /c npm.cmd run test:chrome:launch
 cmd /c npm.cmd run test:live:setup
 cmd /c npm.cmd run test:live:core
 cmd /c npm.cmd run test:live:gpt
+cmd /c npm.cmd run test:live:deepseek
 cmd /c npm.cmd run test:live -- Gemini Doubao
 cmd /c npm.cmd run test:live:chromium
 ```
@@ -100,6 +101,7 @@ Windows 双击 / 命令行友好入口：
 .\test-live-setup.cmd
 .\test-live-core.cmd
 .\test-live-gpt.cmd
+.\test-live-deepseek.cmd
 .\test-live-chromium.cmd
 ```
 

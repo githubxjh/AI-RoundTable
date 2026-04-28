@@ -12,10 +12,10 @@
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
-    "https://claude.ai/*",
     "https://gemini.google.com/*",
     "https://grok.com/*",
     "https://x.com/*",
+    "https://chat.deepseek.com/*",
     "https://www.doubao.com/*",
     "https://flow-chat.gf.bytedance.net/*"
   ],
@@ -32,13 +32,13 @@
       "run_at": "document_end"
     },
     {
-      "matches": ["https://claude.ai/*"],
-      "js": ["src/content/adapter_base.js", "src/content/adapter_claude.js"],
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_gemini.js"],
       "run_at": "document_end"
     },
     {
-      "matches": ["https://gemini.google.com/*"],
-      "js": ["src/content/adapter_base.js", "src/content/adapter_gemini.js"],
+      "matches": ["https://chat.deepseek.com/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_deepseek.js"],
       "run_at": "document_end"
     },
     {

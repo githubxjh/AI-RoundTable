@@ -34,16 +34,16 @@ runTest('live workflow module is loadable', () => {
 });
 
 runTest('default model groups match the planned live workflow', () => {
-    assert.deepEqual(DEFAULT_LIVE_CORE_MODELS, ['Gemini', 'Doubao', 'Grok']);
-    assert.deepEqual(DEFAULT_PROFILE_OPEN_MODELS, ['Gemini', 'Doubao', 'Grok', 'ChatGPT']);
+    assert.deepEqual(DEFAULT_LIVE_CORE_MODELS, ['Gemini', 'Doubao', 'Grok', 'DeepSeek']);
+    assert.deepEqual(DEFAULT_PROFILE_OPEN_MODELS, ['Gemini', 'Doubao', 'Grok', 'DeepSeek', 'ChatGPT']);
     assert.deepEqual(GPT_LIVE_MODELS, ['ChatGPT']);
 });
 
 runTest('normalizeLiveModels falls back to core models and removes duplicates', () => {
-    assert.deepEqual(normalizeLiveModels([]), ['Gemini', 'Doubao', 'Grok']);
+    assert.deepEqual(normalizeLiveModels([]), ['Gemini', 'Doubao', 'Grok', 'DeepSeek']);
     assert.deepEqual(
-        normalizeLiveModels(['ChatGPT', 'ChatGPT', 'Unknown', 'Gemini']),
-        ['ChatGPT', 'Gemini']
+        normalizeLiveModels(['ChatGPT', 'ChatGPT', 'Claude', 'Unknown', 'Gemini', 'DeepSeek']),
+        ['ChatGPT', 'Gemini', 'DeepSeek']
     );
 });
 

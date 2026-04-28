@@ -7,23 +7,48 @@ import {
 } from '../utils/storage.js';
 import { applyI18n, t } from './i18n.mjs';
 import {
+    FOLLOWUP_PRIMARY_PRESET_ID,
     MAX_ROUTER_MODIFIERS,
+    ROUTER_QUOTE_KIND,
     applyPresetSelection,
     buildFinalRouterPrompt,
+    buildRouteReferenceBlock,
     buildRouterInstruction,
     createEmptyRouterPresetState,
-    getPresetById
+    getFollowupEligibleSources,
+    getPresetById,
+    isRespondReviewMode,
+    validateFollowupRoute
 } from './router_presets.mjs';
+import { buildReviewImportBundle } from './router_review_import.mjs';
 
-const MODELS = ['ChatGPT', 'Claude', 'Grok', 'Gemini', 'Doubao'];
+const ENABLED_MODELS = ['ChatGPT', 'Grok', 'Gemini', 'Doubao', 'DeepSeek'];
+const DISABLED_MODELS = ['Claude'];
+const DISPLAY_MODELS = ['ChatGPT', 'Claude', 'Grok', 'Gemini', 'Doubao', 'DeepSeek'];
 
 const MODEL_CARD_MAP = {
     ChatGPT: 'card-gpt',
     Claude: 'card-claude',
     Grok: 'card-grok',
     Gemini: 'card-gemini',
-    Doubao: 'card-doubao'
+    Doubao: 'card-doubao',
+    DeepSeek: 'card-deepseek'
 };
+
+function isEnabledModel(model) {
+    return ENABLED_MODELS.includes(String(model || '').trim());
+}
+
+function isDisabledModel(model) {
+    return DISABLED_MODELS.includes(String(model || '').trim());
+}
+
+function getModelDisabledMessage(model) {
+    if (model === 'Claude') {
+        return t('modelDisabledClaude', 'Claude 暂不允许使用：当前网页自动化可能触发风控或封号风险。');
+    }
+    return t('modelDisabledGeneric', '该模型暂不允许使用。');
+}
 
 const BROADCAST_MAX_FILES = 3;
 const BROADCAST_MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -160,6 +185,8 @@ function bindRefs() {
     refs.quoteList = document.getElementById('quote-list');
     refs.clearQuotesBtn = document.getElementById('clear-quotes');
     refs.routerPreview = document.getElementById('router-preview');
+    refs.routerFollowupControls = document.getElementById('router-followup-controls');
+    refs.routerFollowupSource = document.getElementById('router-followup-source');
     refs.routerInput = document.getElementById('router-input');
     refs.routeBtn = document.getElementById('route-btn');
     refs.reviewMode = document.getElementById('review-mode');
@@ -180,7 +207,8 @@ function bindRefs() {
 
 function initializeSelectorDefaults() {
     getRouteTargetCheckboxes().forEach((checkbox) => {
-        checkbox.checked = true;
+        checkbox.checked = isEnabledModel(checkbox.value);
+        checkbox.disabled = !isEnabledModel(checkbox.value);
     });
 }
 
@@ -189,6 +217,7 @@ function bindEvents() {
     refs.broadcastAttachBtn?.addEventListener('click', onBroadcastAttachClick);
     refs.broadcastClearFilesBtn?.addEventListener('click', onClearBroadcastFiles);
     refs.broadcastFileInput?.addEventListener('change', onSelectBroadcastFiles);
+    refs.routerFollowupSource?.addEventListener('change', onFollowupSourceChange);
     refs.routerInput?.addEventListener('input', onRouterSupplementInput);
     refs.clearQuotesBtn?.addEventListener('click', onClearQuotes);
     refs.routeBtn?.addEventListener('click', () => { void onRoute(); });
@@ -239,7 +268,12 @@ function onDocumentClick(event) {
     if (!(target instanceof HTMLElement)) return;
 
     if (target.classList.contains('btn-quote')) {
+        if (target.disabled) return;
         const source = target.dataset.source || '';
+        if (isDisabledModel(source)) {
+            window.alert(getModelDisabledMessage(source));
+            return;
+        }
         const card = target.closest('.ai-card');
         const bodyText = card?.querySelector('.card-body')?.textContent || '';
         addQuote(source, bodyText);
@@ -247,7 +281,13 @@ function onDocumentClick(event) {
     }
 
     if (target.classList.contains('btn-candidate')) {
+        if (target.disabled) return;
         void onAddCandidate(target.dataset.model || '');
+        return;
+    }
+
+    if (target.classList.contains('btn-import-review')) {
+        void onImportCandidateReview(target.dataset.candidateId || '');
         return;
     }
 
@@ -275,6 +315,10 @@ function onDocumentClick(event) {
         const card = header.closest('.ai-card');
         const model = getModelFromCard(card?.id || '');
         if (model) {
+            if (isDisabledModel(model)) {
+                window.alert(getModelDisabledMessage(model));
+                return;
+            }
             void sendMessage({ type: 'ACTIVATE_TAB', model });
         }
     }
@@ -388,6 +432,9 @@ function getBroadcastTargets() {
 }
 
 function getRouteTargets() {
+    if (isRespondReviewMode(state) && isEnabledModel(state.selectedFollowupSource)) {
+        return [state.selectedFollowupSource];
+    }
     return getCheckedValues('.router-targets input[type="checkbox"]');
 }
 
@@ -403,7 +450,7 @@ function getCheckedValues(selector) {
     return Array.from(document.querySelectorAll(selector))
         .filter((input) => input instanceof HTMLInputElement && input.checked && !input.disabled)
         .map((input) => input.value)
-        .filter((value) => MODELS.includes(value));
+        .filter((value) => isEnabledModel(value));
 }
 
 function getModelFromCard(cardId) {
@@ -460,6 +507,8 @@ function localizeBackgroundError(response) {
             return t('broadcastNoSupportedTargets', '所选模型都不支持当前附件。');
         case 'invalid_attachments':
             return t('invalidAttachments', '附件数据无效，请重新选择文件。');
+        case 'model_disabled':
+            return t('modelDisabledGeneric', '该模型暂不允许使用。');
         default:
             return String(response?.message || response?.error || '').trim();
     }
@@ -780,19 +829,24 @@ function renderBroadcastStatus() {
         || t('broadcastDropHint', '可以粘贴或拖拽文件到这里，最多 3 个文件，每个不超过 5MB。');
 }
 function addQuote(source, text) {
-    const cleanedSource = String(source || '').trim();
-    const cleanedText = String(text || '').trim();
-    if (!cleanedSource || !cleanedText || cleanedText === t('waitingForResponse', '等待响应...')) {
+    const quote = createQuoteItem({
+        source,
+        text,
+        kind: ROUTER_QUOTE_KIND.answer
+    });
+
+    if (!quote || quote.text === t('waitingForResponse', '等待响应...')) {
         window.alert(t('routeNoQuotes', '请至少引用一个模型回答后再路由。'));
         return;
     }
 
-    const isDuplicate = state.quoteList.some((item) => item.source === cleanedSource && item.text === cleanedText);
+    const quoteKey = getQuoteDedupKey(quote);
+    const isDuplicate = state.quoteList.some((item) => getQuoteDedupKey(item) === quoteKey);
     if (isDuplicate) {
         return;
     }
 
-    state.quoteList = [...state.quoteList, { source: cleanedSource, text: cleanedText }];
+    state.quoteList = [...state.quoteList, quote];
     renderQuoteList();
     refreshRouterComposer();
 }
@@ -822,7 +876,15 @@ function renderQuoteList() {
         .map((item, index) => `
             <div class="quote-item" data-index="${index}">
                 <span class="quote-close" title="remove">×</span>
-                <div><strong>${escapeHtml(item.source)}</strong></div>
+                <div class="quote-head">
+                    <strong>${escapeHtml(item.source)}</strong>
+                    <div class="quote-tags">
+                        <span class="quote-tag ${escapeHtml(item.kind || ROUTER_QUOTE_KIND.generic)}">${escapeHtml(getQuoteKindLabel(item.kind))}</span>
+                        ${item.targetSource ? `<span class="quote-tag generic">${escapeHtml(
+                            t('quoteTargetTag', '回给：{0}', [item.targetSource])
+                        )}</span>` : ''}
+                    </div>
+                </div>
                 <div>${escapeHtml(truncateText(item.text, 260))}</div>
             </div>
         `)
@@ -835,6 +897,10 @@ function onToggleRouterPreset(presetId) {
         window.alert(t('routePrimaryRequired', '请先选择一个主任务，再添加修饰器。'));
         return;
     }
+    if (result.errorCode === 'followup_no_modifiers') {
+        window.alert(t('routeFollowupModifiersDisabled', '“回应评审”模式下不支持叠加修饰器。'));
+        return;
+    }
     if (result.errorCode === 'modifier_limit_reached') {
         window.alert(t('routeModifierLimitReached', '修饰器最多只能选择 {0} 个。', [MAX_ROUTER_MODIFIERS]));
         return;
@@ -842,6 +908,12 @@ function onToggleRouterPreset(presetId) {
 
     state.selectedPrimaryPresetId = result.nextState.selectedPrimaryPresetId;
     state.selectedModifierPresetIds = result.nextState.selectedModifierPresetIds;
+    state.selectedFollowupSource = result.nextState.selectedFollowupSource;
+    refreshRouterComposer();
+}
+
+function onFollowupSourceChange() {
+    state.selectedFollowupSource = String(refs.routerFollowupSource?.value || '').trim();
     refreshRouterComposer();
 }
 
@@ -851,9 +923,13 @@ function onRouterSupplementInput() {
 }
 
 function refreshRouterComposer() {
+    normalizeFollowupSourceSelection();
     state.generatedRouterInstruction = buildRouterInstruction(state, (key) => t(key, ''));
     updatePresetChips();
+    renderFollowupControls();
     updateRouteExclusions();
+
+    const routeError = getRouteValidationError();
 
     if (refs.routerPreview) {
         refs.routerPreview.textContent = state.generatedRouterInstruction
@@ -862,13 +938,12 @@ function refreshRouterComposer() {
     }
 
     if (refs.routeBtn) {
-        refs.routeBtn.disabled = !state.selectedPrimaryPresetId
-            || state.quoteList.length === 0
-            || getRouteTargets().length === 0;
+        refs.routeBtn.disabled = Boolean(routeError);
     }
 }
 
 function updatePresetChips() {
+    const followupMode = isRespondReviewMode(state);
     document.querySelectorAll('.chip[data-preset-id]').forEach((node) => {
         const element = node;
         const presetId = element.dataset.presetId || '';
@@ -880,13 +955,48 @@ function updatePresetChips() {
             : state.selectedModifierPresetIds.includes(presetId);
 
         element.classList.toggle('active', isActive);
-        element.disabled = preset.role === 'modifier' && !state.selectedPrimaryPresetId && !isActive;
+        element.disabled = preset.role === 'modifier' && (
+            (!state.selectedPrimaryPresetId && !isActive)
+            || followupMode
+        );
     });
 }
 
 function updateRouteExclusions() {
+    const checkboxes = getRouteTargetCheckboxes();
+    if (isRespondReviewMode(state)) {
+        checkboxes.forEach((checkbox) => {
+            if (!isEnabledModel(checkbox.value)) {
+                checkbox.checked = false;
+                checkbox.disabled = true;
+                return;
+            }
+            if (checkbox.dataset.followupLocked !== 'true') {
+                checkbox.dataset.followupLocked = 'true';
+                checkbox.dataset.followupPrevChecked = checkbox.checked ? 'true' : 'false';
+            }
+            checkbox.checked = checkbox.value === state.selectedFollowupSource;
+            checkbox.disabled = true;
+        });
+        return;
+    }
+
+    checkboxes.forEach((checkbox) => {
+        if (checkbox.dataset.followupLocked === 'true') {
+            checkbox.checked = checkbox.dataset.followupPrevChecked === 'true';
+            delete checkbox.dataset.followupLocked;
+            delete checkbox.dataset.followupPrevChecked;
+        }
+    });
+
     const quotedSources = new Set(state.quoteList.map((item) => item.source));
-    getRouteTargetCheckboxes().forEach((checkbox) => {
+    checkboxes.forEach((checkbox) => {
+        if (!isEnabledModel(checkbox.value)) {
+            checkbox.checked = false;
+            checkbox.disabled = true;
+            return;
+        }
+
         const shouldDisable = quotedSources.has(checkbox.value);
         if (shouldDisable) {
             if (!checkbox.disabled && checkbox.checked) {
@@ -906,23 +1016,36 @@ function updateRouteExclusions() {
     });
 }
 
-async function onRoute() {
-    if (!state.selectedPrimaryPresetId) {
-        window.alert(t('routeNoPrimary', '请先选择一个主任务。'));
+function renderFollowupControls() {
+    if (!refs.routerFollowupControls || !refs.routerFollowupSource) return;
+
+    const followupMode = isRespondReviewMode(state);
+    refs.routerFollowupControls.hidden = !followupMode;
+
+    if (!followupMode) {
+        refs.routerFollowupSource.innerHTML = '';
         return;
     }
 
-    if (state.quoteList.length === 0) {
-        window.alert(t('routeNoQuotes', '请至少引用一个模型回答后再路由。'));
+    const eligibleSources = getFollowupEligibleSources(state.quoteList).filter((source) => isEnabledModel(source));
+    if (!eligibleSources.includes(state.selectedFollowupSource)) {
+        state.selectedFollowupSource = '';
+    }
+    refs.routerFollowupSource.innerHTML = [
+        `<option value="">${escapeHtml(t('routerFollowupSourcePlaceholder', '请选择要回给哪个原模型'))}</option>`,
+        ...eligibleSources.map((source) => `<option value="${escapeHtml(source)}">${escapeHtml(source)}</option>`)
+    ].join('');
+    refs.routerFollowupSource.value = state.selectedFollowupSource || '';
+}
+
+async function onRoute() {
+    const routeError = getRouteValidationError();
+    if (routeError) {
+        window.alert(routeError);
         return;
     }
 
     const targets = getRouteTargets();
-    if (targets.length === 0) {
-        window.alert(t('routeNoTargets', '请至少选择一个路由目标。'));
-        return;
-    }
-
     const finalPrompt = buildFinalRouterPrompt(
         state.generatedRouterInstruction,
         state.routerSupplement,
@@ -932,7 +1055,7 @@ async function onRoute() {
     const response = await sendMessage({
         type: 'ROUTE',
         instruction: finalPrompt,
-        quote: buildRouteReferenceBlock(),
+        quote: buildRouteReferenceBlock(state.quoteList, state, (key) => t(key, '')),
         targets
     });
 
@@ -944,16 +1067,137 @@ async function onRoute() {
     window.alert(t('routeFailedPrefix', '路由失败：{0}', [localizeBackgroundError(response) || 'Unknown error']));
 }
 
-function buildRouteReferenceBlock() {
-    return state.quoteList
-        .map((item, index) => {
-            const prefix = t('routeReferencePrefix', '参考 {0} / {1}', [item.source, index + 1]);
-            return `${prefix}\n${item.text}`;
-        })
-        .join('\n\n');
+function createQuoteItem({
+    source,
+    text,
+    kind = ROUTER_QUOTE_KIND.generic,
+    targetSource = null,
+    meta = null
+} = {}) {
+    const cleanedSource = String(source || '').trim();
+    const cleanedText = String(text || '').trim();
+    if (!cleanedSource || !cleanedText) {
+        return null;
+    }
+
+    return {
+        source: cleanedSource,
+        text: cleanedText,
+        kind: Object.values(ROUTER_QUOTE_KIND).includes(kind) ? kind : ROUTER_QUOTE_KIND.generic,
+        targetSource: String(targetSource || '').trim() || null,
+        meta: meta && typeof meta === 'object' ? { ...meta } : null
+    };
 }
+
+function getQuoteDedupKey(item) {
+    return [
+        String(item?.source || '').trim(),
+        String(item?.kind || '').trim(),
+        String(item?.targetSource || '').trim(),
+        String(item?.text || '').trim()
+    ].join('::');
+}
+
+function getQuoteKindLabel(kind) {
+    switch (kind) {
+        case ROUTER_QUOTE_KIND.answer:
+            return t('quoteKindAnswer', '原答案');
+        case ROUTER_QUOTE_KIND.feedback:
+            return t('quoteKindFeedback', '外部反馈');
+        default:
+            return t('quoteKindGeneric', '引用');
+    }
+}
+
+function normalizeFollowupSourceSelection() {
+    if (!isRespondReviewMode(state)) {
+        state.selectedFollowupSource = null;
+        return;
+    }
+
+    const eligibleSources = getFollowupEligibleSources(state.quoteList).filter((source) => isEnabledModel(source));
+    if (!eligibleSources.includes(state.selectedFollowupSource)) {
+        state.selectedFollowupSource = null;
+    }
+}
+
+function getRouteValidationError() {
+    if (!state.selectedPrimaryPresetId) {
+        return t('routeNoPrimary', '请先选择一个主任务。');
+    }
+
+    if (state.quoteList.length === 0) {
+        return t('routeNoQuotes', '请至少引用一个模型回答后再路由。');
+    }
+
+    if (isRespondReviewMode(state)) {
+        const validation = validateFollowupRoute({
+            selectedFollowupSource: state.selectedFollowupSource,
+            quoteList: state.quoteList
+        });
+
+        switch (validation.errorCode) {
+            case 'followup_source_required':
+                return t('routeFollowupSourceRequired', '请选择一个被评对象。');
+            case 'followup_original_answer_required':
+                return t('routeFollowupOriginalRequired', '需要先有该对象自己的原答案引用。');
+            case 'followup_feedback_required':
+                return t('routeFollowupFeedbackRequired', '还需要至少一条来自其他 AI 的外部反馈。');
+            default:
+                return '';
+        }
+    }
+
+    if (getRouteTargets().length === 0) {
+        return t('routeNoTargets', '请至少选择一个路由目标。');
+    }
+
+    return '';
+}
+
+async function onImportCandidateReview(candidateId) {
+    if (!state.activeRound || !candidateId) {
+        window.alert(t('reviewNoRound', '当前没有活动轮次，请先群发创建一轮。'));
+        return;
+    }
+
+    const bundle = buildReviewImportBundle(state.activeRound, candidateId);
+    if (bundle.errorCode) {
+        switch (bundle.errorCode) {
+            case 'candidate_not_found':
+                window.alert(t('routeImportCandidateMissing', '没有找到对应的候选答案。'));
+                return;
+            case 'candidate_answer_missing':
+                window.alert(t('routeImportCandidateAnswerMissing', '该候选答案还没有可导入的原答案内容。'));
+                return;
+            case 'followup_feedback_missing':
+                window.alert(t('routeImportFeedbackMissing', '还没有可导入的外部评审意见。'));
+                return;
+            default:
+                window.alert(t('routeImportFailed', '导入评审失败，请稍后重试。'));
+                return;
+        }
+    }
+
+    if (isDisabledModel(bundle.followupSource)) {
+        window.alert(getModelDisabledMessage(bundle.followupSource));
+        return;
+    }
+
+    state.quoteList = bundle.quoteList;
+    state.selectedPrimaryPresetId = FOLLOWUP_PRIMARY_PRESET_ID;
+    state.selectedModifierPresetIds = [];
+    state.selectedFollowupSource = bundle.followupSource;
+    renderQuoteList();
+    refreshRouterComposer();
+}
+
 async function onAddCandidate(model) {
-    if (!MODELS.includes(model)) {
+    if (isDisabledModel(model)) {
+        window.alert(getModelDisabledMessage(model));
+        return;
+    }
+    if (!isEnabledModel(model)) {
         window.alert(t('unknownModel', '未知模型：{0}', [model]));
         return;
     }
@@ -980,7 +1224,7 @@ async function onAddCandidate(model) {
         roundId,
         createRoundIfMissing: true,
         questionIfCreate,
-        targetModelsIfCreate: targetModelsIfCreate.length > 0 ? targetModelsIfCreate : MODELS
+        targetModelsIfCreate: targetModelsIfCreate.length > 0 ? targetModelsIfCreate : ENABLED_MODELS
     });
 
     if (response?.status === 'candidate_added') {
@@ -1168,12 +1412,34 @@ function syncReviewControlsState() {
 }
 
 function renderCards() {
-    MODELS.forEach((model) => renderCard(model));
+    DISPLAY_MODELS.forEach((model) => renderCard(model));
 }
 
 function renderCard(model) {
     const card = document.getElementById(MODEL_CARD_MAP[model]);
     if (!card) return;
+
+    if (isDisabledModel(model)) {
+        card.classList.add('disabled');
+        const dot = card.querySelector('.status-dot');
+        const statusText = card.querySelector('.status-text');
+        const body = card.querySelector('.card-body');
+        const actions = card.querySelectorAll('.card-actions button');
+        dot?.classList.remove('active', 'thinking');
+        if (statusText) {
+            statusText.textContent = t('statusDisabled', '已禁用');
+        }
+        if (body) {
+            body.textContent = getModelDisabledMessage(model);
+        }
+        actions.forEach((button) => {
+            button.disabled = true;
+            button.title = getModelDisabledMessage(model);
+        });
+        return;
+    }
+
+    card.classList.remove('disabled');
 
     const payload = state.modelState[model] || {};
     const status = String(payload.status || 'idle').trim();
@@ -1202,7 +1468,7 @@ function renderCard(model) {
 }
 
 function updateCard(model, status, summary) {
-    if (!model) return;
+    if (!model || !DISPLAY_MODELS.includes(model) || isDisabledModel(model)) return;
     const nextSummary = String(summary || '').trim();
     state.modelState[model] = {
         ...(state.modelState[model] || {}),
@@ -1291,7 +1557,21 @@ function renderDiscussionResults() {
         return;
     }
 
-    refs.resultBoard.innerHTML = evaluations
+    const candidates = Array.isArray(state.activeRound?.candidates) ? state.activeRound.candidates : [];
+    const importRow = candidates.length > 0
+        ? `
+            <div class="discussion-import-row">
+                ${candidates.map((candidate) => `
+                    <button
+                        class="btn btn-neutral btn-small btn-import-review"
+                        data-candidate-id="${escapeHtml(candidate.candidateId || '')}"
+                    >${escapeHtml(t('actionImportReview', '导入评审'))} · ${escapeHtml(candidate.model || 'Unknown')}</button>
+                `).join('')}
+            </div>
+        `
+        : '';
+
+    refs.resultBoard.innerHTML = importRow + evaluations
         .map((evaluation) => `
             <div class="rank-row">
                 <div class="rank-title">${escapeHtml(evaluation.judgeModel || 'Unknown')}</div>
@@ -1349,11 +1629,25 @@ function renderScoringResults() {
 function buildCandidateDetailsHtml(candidateId, candidate) {
     const details = collectCandidateJudgeDetails(candidateId, candidate);
     if (details.length === 0) {
-        return `<div class="rank-details-empty">${escapeHtml(
-            t('resultNoCompletedJudge', '评委尚未完成有效评分。')
-        )}</div>`;
+        return `
+            <div class="rank-detail-actions">
+                <button class="btn btn-neutral btn-small btn-import-review" data-candidate-id="${escapeHtml(candidateId)}">${escapeHtml(
+                    t('actionImportReview', '导入评审')
+                )}</button>
+            </div>
+            <div class="rank-details-empty">${escapeHtml(
+                t('resultNoCompletedJudge', '评委尚未完成有效评分。')
+            )}</div>
+        `;
     }
-    return details.join('');
+    return `
+        <div class="rank-detail-actions">
+            <button class="btn btn-neutral btn-small btn-import-review" data-candidate-id="${escapeHtml(candidateId)}">${escapeHtml(
+                t('actionImportReview', '导入评审')
+            )}</button>
+        </div>
+        ${details.join('')}
+    `;
 }
 
 function collectCandidateJudgeDetails(candidateId, candidate) {

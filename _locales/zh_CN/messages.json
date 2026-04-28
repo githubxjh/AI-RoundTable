@@ -502,5 +502,80 @@
   },
   "roundStatusFailed": {
     "message": "失败"
+  },
+  "routerPresetLabelRespondReview": {
+    "message": "回应评审"
+  },
+  "routerRespondReviewIntro": {
+    "message": "请基于下面整理的材料完成以下任务："
+  },
+  "routerRespondReviewStepRespond": {
+    "message": "先回应其他 AI 提出的关键质疑、追问和补充，说明你接受、部分接受或不接受的内容及原因。"
+  },
+  "routerRespondReviewStepRevise": {
+    "message": "在吸收有效反馈后，给出一版更新后的完整回答。"
+  },
+  "routerRespondReviewStepSummarize": {
+    "message": "最后用简短总结说明你这次具体修正了什么、还保留哪些不确定点。"
+  },
+  "routerFollowupAnswerSection": {
+    "message": "你的上一版回答"
+  },
+  "routerFollowupFeedbackSection": {
+    "message": "其他 AI 的评价、追问与补充"
+  },
+  "routerFollowupSourceLabel": {
+    "message": "被评对象"
+  },
+  "routerFollowupSourcePlaceholder": {
+    "message": "请选择要回给哪个原模型"
+  },
+  "routeFollowupModifiersDisabled": {
+    "message": "“回应评审”模式下不支持叠加修饰器。"
+  },
+  "routeFollowupSourceRequired": {
+    "message": "请选择一个被评对象。"
+  },
+  "routeFollowupOriginalRequired": {
+    "message": "需要先有该对象自己的原答案引用。"
+  },
+  "routeFollowupFeedbackRequired": {
+    "message": "还需要至少一条来自其他 AI 的外部反馈。"
+  },
+  "quoteKindAnswer": {
+    "message": "原答案"
+  },
+  "quoteKindFeedback": {
+    "message": "外部反馈"
+  },
+  "quoteKindGeneric": {
+    "message": "引用"
+  },
+  "quoteTargetTag": {
+    "message": "回给：{0}"
+  },
+  "actionImportReview": {
+    "message": "导入评审"
+  },
+  "routeImportCandidateMissing": {
+    "message": "没有找到对应的候选答案。"
+  },
+  "routeImportCandidateAnswerMissing": {
+    "message": "该候选答案还没有可导入的原答案内容。"
+  },
+  "routeImportFeedbackMissing": {
+    "message": "还没有可导入的外部评审意见。"
+  },
+  "routeImportFailed": {
+    "message": "导入评审失败，请稍后重试。"
+  },
+  "statusDisabled": {
+    "message": "已禁用"
+  },
+  "modelDisabledClaude": {
+    "message": "Claude 暂不允许使用：当前网页自动化可能触发风控或封号风险。"
+  },
+  "modelDisabledGeneric": {
+    "message": "该模型暂不允许使用。"
   }
 }

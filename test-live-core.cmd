@@ -1,4 +1,4 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-node scripts\test_live.mjs Gemini Doubao Grok %*
+node scripts\test_live.mjs Gemini Doubao Grok DeepSeek %*

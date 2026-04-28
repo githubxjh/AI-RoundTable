@@ -18,8 +18,8 @@ export function buildPanelSmokeState({ now = Date.now() } = {}) {
         roundId: 'round_smoke',
         question: '如何把 AI RoundTable 打造成更高效的多模型协作插件？',
         status: 'completed',
-        targetModels: ['ChatGPT', 'Claude', 'Grok'],
-        candidateIds: ['candidate_gpt', 'candidate_claude'],
+        targetModels: ['ChatGPT', 'DeepSeek', 'Grok'],
+        candidateIds: ['candidate_gpt', 'candidate_deepseek'],
         evaluationIds: ['evaluation_gemini', 'evaluation_doubao'],
         ranking: [
             {
@@ -31,7 +31,7 @@ export function buildPanelSmokeState({ now = Date.now() } = {}) {
                 variance: 0.08
             },
             {
-                candidateId: 'candidate_claude',
+                candidateId: 'candidate_deepseek',
                 finalScore: 8.34,
                 rawMean: 8.31,
                 normalizedMean: 8.34,
@@ -70,10 +70,10 @@ export function buildPanelSmokeState({ now = Date.now() } = {}) {
             answerText: '建议先把 Router 做成主任务 + 修饰器的中文组合，再围绕 smoke 自动化补回归。',
             capturedAt: createdAt + 1_000
         },
-        candidate_claude: {
-            candidateId: 'candidate_claude',
+        candidate_deepseek: {
+            candidateId: 'candidate_deepseek',
             roundId: round.roundId,
-            model: 'Claude',
+            model: 'DeepSeek',
             answerText: '重点是把评审、路由和落地建议拆开，让界面更清晰，同时补稳定的自测脚本。',
             capturedAt: createdAt + 2_000
         }
@@ -88,7 +88,7 @@ export function buildPanelSmokeState({ now = Date.now() } = {}) {
             labelMode: 'blind',
             blindMap: {
                 A: 'candidate_gpt',
-                B: 'candidate_claude'
+                B: 'candidate_deepseek'
             },
             status: 'done',
             parsedScores: [
@@ -128,7 +128,7 @@ export function buildPanelSmokeState({ now = Date.now() } = {}) {
             labelMode: 'blind',
             blindMap: {
                 A: 'candidate_gpt',
-                B: 'candidate_claude'
+                B: 'candidate_deepseek'
             },
             status: 'done',
             parsedScores: [
@@ -176,7 +176,7 @@ export function buildPanelSmokeState({ now = Date.now() } = {}) {
                 lastSummary: '建议先把中文 Router 和自测脚本一起搭起来。',
                 updatedAt: updatedAt - 6_000
             },
-            Claude: {
+            DeepSeek: {
                 status: 'idle',
                 lastSummary: '先把评审链路和落地建议分层，再补自动化回归。',
                 updatedAt: updatedAt - 5_000

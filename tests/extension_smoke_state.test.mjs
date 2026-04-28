@@ -36,16 +36,16 @@ runTest('smoke fixture seeds one active round with candidates, evaluations, and 
     const round = fixture[RT_KEYS.rounds].round_smoke;
     assert.equal(round.question, '如何把 AI RoundTable 打造成更高效的多模型协作插件？');
     assert.equal(round.status, 'completed');
-    assert.deepEqual(round.candidateIds, ['candidate_gpt', 'candidate_claude']);
+    assert.deepEqual(round.candidateIds, ['candidate_gpt', 'candidate_deepseek']);
     assert.deepEqual(round.evaluationIds, ['evaluation_gemini', 'evaluation_doubao']);
     assert.equal(round.config.reviewMode, 'scoring');
     assert.equal(round.config.labelMode, 'blind');
     assert.equal(round.ranking.length, 2);
 
     const candidateGpt = fixture[RT_KEYS.candidates].candidate_gpt;
-    const candidateClaude = fixture[RT_KEYS.candidates].candidate_claude;
+    const candidateDeepSeek = fixture[RT_KEYS.candidates].candidate_deepseek;
     assert.match(candidateGpt.answerText, /Router/);
-    assert.match(candidateClaude.answerText, /评审/);
+    assert.match(candidateDeepSeek.answerText, /评审/);
 
     const evaluationGemini = fixture[RT_KEYS.evaluations].evaluation_gemini;
     assert.equal(evaluationGemini.status, 'done');
@@ -59,8 +59,9 @@ runTest('smoke fixture also seeds model summaries for quote and candidate action
 
     assert.equal(modelState.ChatGPT.status, 'idle');
     assert.match(modelState.ChatGPT.lastSummary, /中文/);
-    assert.equal(modelState.Claude.status, 'idle');
-    assert.match(modelState.Claude.lastSummary, /落地/);
+    assert.equal(modelState.Claude, undefined);
+    assert.equal(modelState.DeepSeek.status, 'idle');
+    assert.match(modelState.DeepSeek.lastSummary, /落地/);
 });
 
 let passed = 0;

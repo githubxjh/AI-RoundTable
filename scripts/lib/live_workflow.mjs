@@ -1,15 +1,16 @@
 export const SUPPORTED_LIVE_MODELS = Object.freeze([
     'ChatGPT',
-    'Claude',
     'Grok',
     'Gemini',
-    'Doubao'
+    'Doubao',
+    'DeepSeek'
 ]);
 
 export const DEFAULT_LIVE_CORE_MODELS = Object.freeze([
     'Gemini',
     'Doubao',
-    'Grok'
+    'Grok',
+    'DeepSeek'
 ]);
 
 export const DEFAULT_PROFILE_OPEN_MODELS = Object.freeze([
@@ -51,12 +52,6 @@ const LOGIN_MARKERS = Object.freeze({
         'Log in',
         'Sign up'
     ],
-    Claude: [
-        'Continue with Google',
-        'Continue with email',
-        'Log in to Claude',
-        'Sign up to Claude'
-    ],
     Grok: [
         'x.com/i/flow/login',
         'Sign in to X',
@@ -77,6 +72,14 @@ const LOGIN_MARKERS = Object.freeze({
         '验证码登录',
         '抖音账号登录',
         '登录豆包'
+    ],
+    DeepSeek: [
+        '/sign_in',
+        '/login',
+        'Log in',
+        'Sign in',
+        'Sign up',
+        'Continue with Google'
     ]
 });
 
