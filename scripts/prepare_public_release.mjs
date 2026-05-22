@@ -38,6 +38,7 @@ const userPackageEntries = [
     'src/content',
     'src/sidepanel',
     'src/utils/analysis_provider.mjs',
+    'src/utils/attachment_capabilities.mjs',
     'src/utils/storage.js'
 ];
 

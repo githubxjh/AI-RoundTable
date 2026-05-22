@@ -1,0 +1,62 @@
+{
+  "manifest_version": 3,
+  "default_locale": "zh_CN",
+  "name": "__MSG_extName__",
+  "version": "1.1",
+  "description": "__MSG_extDescription__",
+  "permissions": [
+    "sidePanel",
+    "tabs",
+    "storage",
+    "scripting",
+    "debugger",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*",
+    "https://grok.com/*",
+    "https://x.com/*",
+    "https://chat.deepseek.com/*",
+    "https://api.deepseek.com/*",
+    "https://www.doubao.com/*",
+    "https://flow-chat.gf.bytedance.net/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service_worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/panel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_gpt.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_gemini.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["https://chat.deepseek.com/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_deepseek.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["https://www.doubao.com/*", "https://flow-chat.gf.bytedance.net/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_doubao.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["https://grok.com/*", "https://x.com/*"],
+      "js": ["src/content/adapter_base.js", "src/content/adapter_grok.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

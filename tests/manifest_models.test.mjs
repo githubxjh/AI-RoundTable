@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const manifest = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'manifest.json'), 'utf8'));
+const advancedManifest = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'manifest.advanced.json'), 'utf8'));
 const serviceWorkerSource = fs.readFileSync(
     path.join(process.cwd(), 'src', 'background', 'service_worker.js'),
     'utf8'
@@ -36,6 +37,18 @@ runTest('manifest injects DeepSeek and does not inject Claude', () => {
         (entry.matches || []).includes('https://chat.deepseek.com/*')
     ));
     assert.ok(deepseekEntry, 'DeepSeek content script match should exist');
+});
+
+runTest('lite manifest keeps debugger and downloads out of the store build', () => {
+    assert.equal((manifest.permissions || []).includes('debugger'), false);
+    assert.equal((manifest.permissions || []).includes('downloads'), false);
+});
+
+runTest('advanced manifest opts into debugger and downloads explicitly', () => {
+    assert.ok((advancedManifest.permissions || []).includes('debugger'));
+    assert.ok((advancedManifest.permissions || []).includes('downloads'));
+    assert.deepEqual(advancedManifest.content_scripts, manifest.content_scripts);
+    assert.deepEqual(advancedManifest.host_permissions, manifest.host_permissions);
 });
 
 runTest('runtime enabled model registry includes DeepSeek and excludes Claude', () => {

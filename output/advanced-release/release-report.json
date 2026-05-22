@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-05-22T12:53:23.924Z",
+  "advancedPackageDir": "C:\\Users\\xiepro\\Desktop\\AI-RoundTable\\output\\advanced-release\\AI-RoundTable-advanced",
+  "notes": [
+    "Advanced is for local unpacked/developer-mode use.",
+    "The package manifest is copied from manifest.advanced.json.",
+    "The Lite Chrome Web Store manifest remains manifest.json."
+  ]
+}
