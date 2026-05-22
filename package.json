@@ -1,10 +1,11 @@
 {
   "name": "ai-roundtable",
   "version": "1.1.0",
+  "type": "module",
   "private": true,
   "description": "Local smoke and live automation for the AI RoundTable Chrome extension.",
   "scripts": {
-    "test:helpers": "node tests/router_presets.test.mjs && node tests/router_review_import.test.mjs && node tests/playwright_env.test.mjs && node tests/playwright_runtime.test.mjs && node tests/adapter_watchdog.test.mjs && node tests/chatgpt_adapter.test.mjs && node tests/deepseek_adapter.test.mjs && node tests/manifest_models.test.mjs && node tests/live_backend.test.mjs && node tests/chrome_attach.test.mjs && node tests/extension_smoke_state.test.mjs && node tests/live_workflow.test.mjs",
+    "test:helpers": "node tests/router_presets.test.mjs && node tests/router_review_import.test.mjs && node tests/analysis_provider.test.mjs && node tests/playwright_env.test.mjs && node tests/playwright_runtime.test.mjs && node tests/adapter_watchdog.test.mjs && node tests/chatgpt_adapter.test.mjs && node tests/deepseek_adapter.test.mjs && node tests/doubao_adapter.test.mjs && node tests/manifest_models.test.mjs && node tests/live_backend.test.mjs && node tests/chrome_attach.test.mjs && node tests/extension_smoke_state.test.mjs && node tests/live_workflow.test.mjs",
     "test:profile:init": "node scripts/init_browser_profile.mjs",
     "test:profile:open": "node scripts/open_browser_profile.mjs",
     "test:chrome:launch": "node scripts/launch_real_chrome.mjs",
@@ -16,7 +17,8 @@
     "test:live:gpt": "node scripts/test_live.mjs ChatGPT",
     "test:live:deepseek": "node scripts/test_live.mjs DeepSeek",
     "test:live:chromium": "node scripts/test_live_chromium.mjs",
-    "test:all": "npm run test:helpers && npm run test:smoke:headless"
+    "test:all": "npm run test:helpers && npm run test:smoke:headless",
+    "release:public": "node scripts/prepare_public_release.mjs"
   },
   "devDependencies": {
     "playwright": "^1.59.1"

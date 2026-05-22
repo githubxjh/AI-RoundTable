@@ -9,6 +9,11 @@ class DoubaoAdapter extends AdapterBase {
         this.lastGeneratingSummary = '';
     }
 
+    init() {
+        super.init();
+        setTimeout(() => this.syncExistingResponse(), 0);
+    }
+
     getInputSelector() {
         return [
             'textarea[data-testid="chat_input_input"]',
@@ -188,6 +193,16 @@ class DoubaoAdapter extends AdapterBase {
     }
 
     getLastAssistantText() {
+        const legacyText = this.getLastAssistantTextFromLegacyDom();
+        if (legacyText) return legacyText;
+
+        const modernText = this.getLastAssistantTextFromModernDom();
+        if (modernText) return modernText;
+
+        return '';
+    }
+
+    getLastAssistantTextFromLegacyDom() {
         const selectors = [
             '[data-testid="receive_message"] [data-testid="message_text_content"]',
             '[data-testid="receive_message"] [data-testid="message-content"]',
@@ -213,6 +228,74 @@ class DoubaoAdapter extends AdapterBase {
         }
 
         return '';
+    }
+
+    getLastAssistantTextFromModernDom() {
+        const messageNodes = Array.from(document.querySelectorAll('[data-message-id]'));
+        for (let index = messageNodes.length - 1; index >= 0; index -= 1) {
+            const text = this.extractModernAssistantMessageText(messageNodes[index]);
+            if (text) return text;
+        }
+        return '';
+    }
+
+    extractModernAssistantMessageText(messageNode) {
+        if (!messageNode || this.isModernUserMessageNode(messageNode)) return '';
+
+        const selectors = [
+            '.flow-markdown-body',
+            '[class*="flow-markdown-body"]',
+            '[data-plugin-identifier*="block_type:10000"] [class*="markdown"]',
+            '[data-plugin-identifier*="block_type:10000"]'
+        ];
+
+        for (const selector of selectors) {
+            const nodes = Array.from(messageNode.querySelectorAll(selector))
+                .filter((node) => !this.isInsideThinkingBlock(node))
+                .map((node) => this.normalizeExtractedText(node.innerText || node.textContent || ''))
+                .filter(Boolean);
+            if (nodes.length > 0) {
+                return nodes.join('\n\n').trim();
+            }
+        }
+
+        return '';
+    }
+
+    isModernUserMessageNode(messageNode) {
+        const classText = [
+            String(messageNode.getAttribute?.('class') || ''),
+            String(messageNode.className || '')
+        ].join(' ');
+        if (/justify-end|send-msg-bubble/.test(classText)) return true;
+
+        return Boolean(messageNode.querySelector?.('[class*="send-msg-bubble"]'));
+    }
+
+    isInsideThinkingBlock(node) {
+        return Boolean(node?.closest?.([
+            '[data-thinking-box]',
+            '[data-plugin-identifier*="block_type:10040"]',
+            '[class*="thinking"]'
+        ].join(', ')));
+    }
+
+    normalizeExtractedText(text) {
+        return String(text || '')
+            .replace(/\u00a0/g, ' ')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
+    syncExistingResponse() {
+        const currentText = this.getLastAssistantText();
+        if (!currentText || currentText === this.lastSentContent) return;
+        this.isGenerating = false;
+        this.expectingNewMessage = false;
+        this.stableText = currentText;
+        this.stableTicks = 2;
+        this.lastSentContent = currentText;
+        this.sendUpdate('idle', currentText);
     }
 
     checkForNewResponse() {

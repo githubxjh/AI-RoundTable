@@ -14,6 +14,18 @@
   "globalInputPlaceholder": {
     "message": "输入一个问题，同时发给多个 AI 模型"
   },
+  "betaNoticeTitle": {
+    "message": "测试版说明"
+  },
+  "betaNoticeBody": {
+    "message": "当前版本仍处于小范围测试阶段，可能会遇到不稳定、页面适配失效或发送状态不准等问题，还请见谅，也欢迎反馈。附件上传功能还没有完全做好：部分模型可能无法带附件发送，系统会尝试降级为纯文本；重要内容建议先直接粘贴到问题里。"
+  },
+  "newbieGuideTitle": {
+    "message": "快速上手"
+  },
+  "newbieGuideBody": {
+    "message": "先输入问题并同时提问；看到回答后点“引用”或“纳入本轮”；再用观点互评或评审让多个 AI 互相审阅。"
+  },
   "broadcastAddFiles": {
     "message": "添加文件"
   },
@@ -24,10 +36,10 @@
     "message": "尚未选择文件。"
   },
   "broadcastDropHint": {
-    "message": "可以粘贴或拖拽文件到这里，最多 3 个文件，每个不超过 5MB。"
+    "message": "附件上传测试中：可以粘贴或拖拽文件，最多 3 个、每个不超过 5MB。部分模型可能无法带附件发送，系统会尝试降级为纯文本；重要内容建议直接粘贴到问题里。"
   },
   "actionBroadcast": {
-    "message": "群发"
+    "message": "同时提问"
   },
   "statusIdle": {
     "message": "空闲"
@@ -42,7 +54,10 @@
     "message": "引用"
   },
   "actionAddCandidate": {
-    "message": "加入候选"
+    "message": "纳入本轮"
+  },
+  "cardActionHelp": {
+    "message": "引用：送到“观点互评”，让其他 AI 审阅这条回答；纳入本轮：保存为本轮候选，用于后续评审、评分和排名。"
   },
   "sectionRound": {
     "message": "轮次"
@@ -72,25 +87,28 @@
     "message": "（问题为空）"
   },
   "sectionRouter": {
-    "message": "路由器"
+    "message": "观点互评"
   },
   "actionClearQuotes": {
     "message": "清空引用"
   },
   "routerQuotesEmpty": {
-    "message": "点击“引用”把回答加入路由器。"
+    "message": "点击“引用”把回答加入观点互评。"
   },
   "routerPrimaryGroup": {
-    "message": "主任务"
+    "message": "分析角度"
   },
   "routerModifierGroup": {
-    "message": "修饰器"
+    "message": "额外要求"
+  },
+  "routerSectionHelp": {
+    "message": "引用某个回答，再选分析角度，把它交给其他 AI 审阅。"
   },
   "routerGeneratedLabel": {
     "message": "系统生成指令"
   },
   "routerGeneratedEmpty": {
-    "message": "先选择一个主任务，再按需叠加修饰器。"
+    "message": "先选择一个分析角度，再按需叠加额外要求。"
   },
   "routerSupplementLabel": {
     "message": "补充要求"
@@ -124,6 +142,9 @@
   },
   "routerPresetLabelExecution": {
     "message": "要落地"
+  },
+  "routerPresetTitleRespondReview": {
+    "message": "把原答案和外部评审意见整理后，发回被评对象回应、修正并总结。"
   },
   "routerGeneratedIntro": {
     "message": "基于上面的引用内容，请完成以下任务："
@@ -161,23 +182,182 @@
   "actionResetTemplate": {
     "message": "恢复模板"
   },
+  "reviewSectionHelp": {
+    "message": "把本轮候选答案交给多个评委模型，让它们评分或讨论。"
+  },
   "reviewModeLabel": {
-    "message": "模式"
+    "message": "评审方式"
+  },
+  "reviewModeTitle": {
+    "message": "选择评委模型如何处理候选答案。"
   },
   "reviewModeScoring": {
     "message": "评分评审"
   },
+  "reviewModeScoringTitle": {
+    "message": "让评委模型按维度打分，并汇总排名。"
+  },
+  "reviewModeScoringHelp": {
+    "message": "让评委按维度打分，并汇总排名。"
+  },
   "reviewModeDiscussion": {
     "message": "讨论评审"
   },
+  "reviewModeDiscussionTitle": {
+    "message": "让评委模型展开文字评价，不要求打分。"
+  },
+  "reviewModeDiscussionHelp": {
+    "message": "让评委输出文字评价，不要求打分。"
+  },
   "labelModeLabel": {
-    "message": "标签"
+    "message": "答案署名"
+  },
+  "labelModeTitle": {
+    "message": "控制评委是否看到候选答案来自哪个模型。"
   },
   "labelModeBlind": {
     "message": "匿名（A/B/C/D）"
   },
+  "labelModeBlindTitle": {
+    "message": "评委只看到编号，降低模型品牌偏见。"
+  },
+  "labelModeBlindHelp": {
+    "message": "隐藏模型来源，降低评审偏见。"
+  },
   "labelModeNamed": {
     "message": "真实模型名"
+  },
+  "labelModeNamedTitle": {
+    "message": "评委能看到每条答案来自哪个模型。"
+  },
+  "labelModeNamedHelp": {
+    "message": "显示模型来源，便于追踪每条答案来自哪个 AI。"
+  },
+  "analysisProviderSectionTitle": {
+    "message": "分析模型配置"
+  },
+  "analysisProviderSummaryDisabled": {
+    "message": "未启用"
+  },
+  "analysisProviderSummaryEnabled": {
+    "message": "已启用：{0}"
+  },
+  "analysisProviderHelp": {
+    "message": "用于评分解析失败时的远程归一化和语义补分。默认适配 DeepSeek，也可填写 OpenAI-Compatible 接口。"
+  },
+  "analysisProviderEnabledLabel": {
+    "message": "启用远程分析模型"
+  },
+  "analysisProviderBaseUrlLabel": {
+    "message": "接口地址"
+  },
+  "analysisProviderModelLabel": {
+    "message": "模型名"
+  },
+  "analysisProviderApiKeyLabel": {
+    "message": "API Key"
+  },
+  "analysisProviderShowKey": {
+    "message": "显示"
+  },
+  "analysisProviderHideKey": {
+    "message": "隐藏"
+  },
+  "analysisProviderThinkingLabel": {
+    "message": "思考模式"
+  },
+  "analysisProviderThinkingDisabled": {
+    "message": "关闭"
+  },
+  "analysisProviderThinkingEnabled": {
+    "message": "开启"
+  },
+  "analysisProviderThinkingOmit": {
+    "message": "不发送"
+  },
+  "analysisProviderReasoningLabel": {
+    "message": "推理强度"
+  },
+  "analysisProviderReasoningOmit": {
+    "message": "不发送"
+  },
+  "analysisProviderReasoningLow": {
+    "message": "低"
+  },
+  "analysisProviderReasoningMedium": {
+    "message": "中"
+  },
+  "analysisProviderReasoningHigh": {
+    "message": "高"
+  },
+  "analysisProviderTimeoutLabel": {
+    "message": "超时时间（毫秒）"
+  },
+  "analysisProviderJsonLabel": {
+    "message": "请求 JSON 输出"
+  },
+  "analysisProviderSave": {
+    "message": "保存配置"
+  },
+  "analysisProviderTest": {
+    "message": "测试连接"
+  },
+  "analysisProviderPriceHint": {
+    "message": "价格可能变化，请以 DeepSeek 官方价格页面为准。"
+  },
+  "analysisProviderSaved": {
+    "message": "分析模型配置已保存。"
+  },
+  "analysisProviderTesting": {
+    "message": "正在测试分析模型连接..."
+  },
+  "analysisProviderTestOk": {
+    "message": "连接测试通过：{0}"
+  },
+  "analysisProviderTestFailed": {
+    "message": "连接测试失败，请检查配置。"
+  },
+  "analysisProviderPermissionDenied": {
+    "message": "浏览器尚未授权访问该接口地址，配置已保存但分析模型暂未启用。"
+  },
+  "analysisProviderPermissionRequired": {
+    "message": "浏览器尚未授权访问该接口地址，无法测试连接。"
+  },
+  "analysisProviderInvalidBaseUrl": {
+    "message": "接口地址无效，请填写 https:// 开头的地址。"
+  },
+  "analysisProviderDisabledError": {
+    "message": "分析模型尚未启用。"
+  },
+  "analysisProviderKeyRequired": {
+    "message": "请先填写 API Key。"
+  },
+  "analysisProviderTimeoutError": {
+    "message": "分析模型请求超时，请稍后重试或调大超时时间。"
+  },
+  "analysisProviderAuthError": {
+    "message": "分析模型鉴权失败，请检查 API Key。"
+  },
+  "analysisProviderNotFoundError": {
+    "message": "分析模型接口或模型名不可用，请检查接口地址和模型名。"
+  },
+  "analysisProviderRateLimitError": {
+    "message": "分析模型请求过于频繁或额度不足，请稍后重试。"
+  },
+  "analysisProviderJsonError": {
+    "message": "分析模型没有按 JSON 格式返回，请检查模型是否支持 JSON 输出。"
+  },
+  "analysisProviderPermissionMissingForReview": {
+    "message": "浏览器尚未授权访问分析模型接口，已跳过远程归一化。"
+  },
+  "analysisProviderTimeoutForReview": {
+    "message": "分析模型请求超时，已跳过远程归一化。"
+  },
+  "analysisProviderAuthForReview": {
+    "message": "分析模型鉴权失败，已跳过远程归一化。"
+  },
+  "analysisProviderHttpForReview": {
+    "message": "分析模型接口返回错误，已跳过远程归一化。"
   },
   "judgeModelsLabel": {
     "message": "评委模型"
@@ -204,19 +384,19 @@
     "message": "暂无结果。"
   },
   "broadcastEnterQuestion": {
-    "message": "请先输入问题再进行群发。"
+    "message": "请先输入问题再同时提问。"
   },
   "broadcastSelectTargetModel": {
     "message": "请至少选择一个目标模型。"
   },
   "broadcasting": {
-    "message": "群发中..."
+    "message": "同时提问中..."
   },
   "broadcastSentCount": {
     "message": "已发送给 {0} 个模型。"
   },
   "broadcastFailedPrefix": {
-    "message": "群发失败：{0}"
+    "message": "同时提问失败：{0}"
   },
   "attachmentsCleared": {
     "message": "已清空附件。"
@@ -282,7 +462,7 @@
     "message": "消息已注入，但未确认发送，请检查模型页面后重试。"
   },
   "broadcastFailedGeneric": {
-    "message": "群发失败。"
+    "message": "同时提问失败。"
   },
   "broadcastOutcomeSent": {
     "message": "已发送 {0} 个模型。"
@@ -296,8 +476,26 @@
   "broadcastOutcomeFailed": {
     "message": "{0} 个模型发送失败（{1}）。"
   },
+  "attachmentTypeRejectedSummary": {
+    "message": "该模型不接受当前附件类型或数量。"
+  },
+  "attachmentDeepSeekManualRequiredSummary": {
+    "message": "DeepSeek 需要手动选择附件，当前自动发送无法代传附件，已改为纯文本。"
+  },
+  "attachmentInputMissingSummary": {
+    "message": "没有找到可用的附件入口，已改为纯文本。"
+  },
+  "attachmentUploadFailedSummary": {
+    "message": "附件上传未完成，已尝试改为纯文本。"
+  },
+  "broadcastSendFailedSummary": {
+    "message": "发送失败。"
+  },
+  "attachmentUnsupportedSummary": {
+    "message": "该模型页面暂不支持自动附件上传。"
+  },
   "candidateDefaultQuestion": {
-    "message": "手动加入候选答案"
+    "message": "手动纳入候选答案"
   },
   "candidateRoundClosedConfirm": {
     "message": "当前轮次已关闭或正在评审。要为这个候选答案新建一轮吗？"
@@ -309,16 +507,16 @@
     "message": "所选轮次不存在，请刷新后重试。"
   },
   "candidateInvalidRequest": {
-    "message": "加入候选时请求无效。"
+    "message": "纳入本轮时请求无效。"
   },
   "candidateAddFailed": {
-    "message": "加入候选失败。"
+    "message": "纳入本轮失败。"
   },
   "candidateDuplicate": {
-    "message": "这条回答已经在当前轮次里了，没有重复加入。"
+    "message": "这条回答已经在当前轮次里了，没有重复纳入。"
   },
   "candidateAddFailedPrefix": {
-    "message": "加入候选失败：{0}"
+    "message": "纳入本轮失败：{0}"
   },
   "routeNoQuotes": {
     "message": "请至少引用一个模型回答后再路由。"
@@ -327,13 +525,13 @@
     "message": "请至少选择一个路由目标。"
   },
   "routeNoPrimary": {
-    "message": "请先选择一个主任务。"
+    "message": "请先选择一个分析角度。"
   },
   "routePrimaryRequired": {
-    "message": "请先选择主任务，再叠加修饰器。"
+    "message": "请先选择一个分析角度，再添加额外要求。"
   },
   "routeModifierLimitReached": {
-    "message": "修饰器最多只能选择 {0} 个。"
+    "message": "额外要求最多只能选择 {0} 个。"
   },
   "routeFailedPrefix": {
     "message": "路由失败：{0}"
@@ -342,7 +540,7 @@
     "message": "参考 {0} / {1}"
   },
   "reviewNoRound": {
-    "message": "当前没有活动轮次，请先群发创建一轮。"
+    "message": "当前没有活动轮次，请先同时提问创建一轮。"
   },
   "reviewRestartConfirm": {
     "message": "当前评审仍在进行中，重新开始会覆盖未完成结果。要继续吗？"
@@ -360,7 +558,7 @@
     "message": "评分评审少于 2 个评委时结果可能不稳定。要继续吗？"
   },
   "reviewNoCandidateAnswer": {
-    "message": "当前轮次还没有可用候选答案，请先加入候选。"
+    "message": "当前轮次还没有可用候选答案，请先纳入本轮。"
   },
   "reviewStartFailed": {
     "message": "启动评审失败。"
@@ -396,7 +594,7 @@
     "message": "超时"
   },
   "unknownModel": {
-    "message": "未知模型"
+    "message": "未知模型：{0}"
   },
   "resultNoRanking": {
     "message": "暂无排名结果。"
@@ -459,13 +657,16 @@
     "message": "已解析 {0} 条评分，归一化模型：{1}。"
   },
   "evalParsedScoreItemsDeepseek": {
-    "message": "已解析 {0} 条评分，使用 deepseek-chat 做归一化，并保留原始理由与证据。"
+    "message": "已解析 {0} 条评分，使用分析模型做归一化，并保留原始理由与证据。"
   },
   "evalParseFailedPrefix": {
     "message": "解析失败：{0}"
   },
   "evalParseFailedInvalidJson": {
     "message": "解析失败：输出不是有效 JSON。"
+  },
+  "evalRemoteAssistDisabled": {
+    "message": "公开测试版暂未启用远程评分归一化；请让评审模型按指定格式重新输出评分。"
   },
   "evalTimeoutPrefix": {
     "message": "超时：{0}"
@@ -477,7 +678,7 @@
     "message": "等待评委回复..."
   },
   "candidateButtonTitleNoRound": {
-    "message": "请先群发创建轮次。"
+    "message": "请先同时提问创建轮次。"
   },
   "routeSentCount": {
     "message": "已向 {0} 个模型发起路由。"
@@ -531,7 +732,7 @@
     "message": "请选择要回给哪个原模型"
   },
   "routeFollowupModifiersDisabled": {
-    "message": "“回应评审”模式下不支持叠加修饰器。"
+    "message": "“回应评审”模式下不支持叠加额外要求。"
   },
   "routeFollowupSourceRequired": {
     "message": "请选择一个被评对象。"
@@ -568,6 +769,30 @@
   },
   "routeImportFailed": {
     "message": "导入评审失败，请稍后重试。"
+  },
+  "routeImportSuccess": {
+    "message": "已导入 {0} 的答案和 {1} 条外部评审意见。"
+  },
+  "routeTargetsQuotedHint": {
+    "message": "已引用 {0} 的回答，这些模型不能作为路由目标；如需发送给它们，请先移除对应引用。"
+  },
+  "routeTargetsFollowupHint": {
+    "message": "回应评审已引用 {0} 的答案和外部反馈，路由目标会自动锁定为 {0}；如需改发其他模型，请先移除对应引用或切换分析角度。"
+  },
+  "routeTargetQuotedTitle": {
+    "message": "该模型已在引用列表中，不能作为路由目标。"
+  },
+  "toastClose": {
+    "message": "关闭"
+  },
+  "confirmModalTitle": {
+    "message": "请确认"
+  },
+  "confirmCancel": {
+    "message": "取消"
+  },
+  "confirmOk": {
+    "message": "确认"
   },
   "statusDisabled": {
     "message": "已禁用"

@@ -81,7 +81,7 @@ try {
     [
         '全局提问',
         '轮次',
-        '路由器',
+        '观点互评',
         '评审',
         '清空引用',
         '开始路由',
@@ -91,24 +91,43 @@ try {
     });
 
     logger.log('smoke:assert-round-state');
-    await expectTextContains(panelPage, '#broadcast-btn', '群发');
+    await expectTextContains(panelPage, '#broadcast-btn', '同时提问');
     await expectTextContains(panelPage, '#clear-quotes', '清空引用');
     await expectTextContains(panelPage, '#route-btn', '开始路由');
     await expectTextContains(panelPage, '#start-review-btn', '开始评分评审');
     await expectTextContains(panelPage, '#round-question', '如何把 AI RoundTable 打造成更高效的多模型协作插件？');
     await expectTextContains(panelPage, '#result-board', '最终分');
+    await expectTextContains(panelPage, '#top-deck', '小范围测试阶段');
+    await expectTextContains(panelPage, '#top-deck', '还请见谅');
+    await expectTextContains(panelPage, '#broadcast-file-status', '附件上传测试中');
+    await expectTextContains(panelPage, '#broadcast-file-status', '降级为纯文本');
+    await expectTextContains(panelPage, '#analysis-provider-panel', '分析模型配置');
+    await expectInputValueContains(panelPage, '#analysis-provider-model', 'deepseek-v4-flash');
+    assert.equal(await panelPage.locator('#analysis-provider-api-key').getAttribute('type'), 'password');
+    await expectTextContains(panelPage, '#card-gpt .card-action-help', '送到“观点互评”');
+    await expectTextContains(panelPage, '#card-gpt .card-action-help', '保存为本轮候选');
+    await expectTextContains(panelPage, '#review-mode-help', '按维度打分');
+    await expectTextContains(panelPage, '#label-mode-help', '隐藏模型来源');
+    await expectModelOrder(panelPage, '.target-selector input[type="checkbox"]', ['ChatGPT', 'Grok', 'Gemini', 'Doubao', 'DeepSeek', 'Claude']);
+    await expectModelOrder(panelPage, '#monitor-stream .ai-card .model-name', ['ChatGPT', 'Grok', 'Gemini', 'Doubao', 'DeepSeek', 'Claude']);
+    await expectModelOrder(panelPage, '.router-targets input[type="checkbox"]', ['ChatGPT', 'Grok', 'Gemini', 'Doubao', 'DeepSeek', 'Claude']);
+    await expectModelOrder(panelPage, '.judge-targets input[type="checkbox"]', ['ChatGPT', 'Grok', 'Gemini', 'Doubao', 'DeepSeek', 'Claude']);
 
     logger.log('smoke:quote-and-router');
     await panelPage.locator('#card-gpt .btn-quote').click();
+    await expectTextContains(panelPage, '#route-targets-hint', 'ChatGPT');
+    await expectTextContains(panelPage, '#route-targets-hint', '不能作为路由目标');
+    assert.equal(await panelPage.locator('.router-targets input[value="ChatGPT"]').isDisabled(), true);
+
     await panelPage.locator('.chip', { hasText: '找漏洞' }).click();
     await panelPage.locator('.chip', { hasText: '补盲区' }).click();
     await panelPage.locator('.chip', { hasText: '要落地' }).click();
 
-    const dialogMessage = await clickAndAcceptDialog(
+    await clickAndExpectToast(
         panelPage,
-        panelPage.locator('.chip', { hasText: '提问题' })
+        panelPage.locator('.chip', { hasText: '提问题' }),
+        '额外要求最多只能选择 2 个'
     );
-    assert.equal(dialogMessage.includes('修饰器最多只能选择 2 个'), true);
 
     const previewText = await panelPage.locator('#router-preview').innerText();
     assert.equal(previewText.includes('最严格的审查者视角'), true);
@@ -125,7 +144,11 @@ try {
     logger.log('smoke:toggle-review-mode');
     await panelPage.selectOption('#review-mode', 'discussion');
     await expectTextContains(panelPage, '#start-review-btn', '开始讨论评审');
+    await expectTextContains(panelPage, '#review-mode-help', '输出文字评价');
     await expectInputValueContains(panelPage, '#review-template', '你将作为圆桌审议成员参与讨论。');
+
+    await panelPage.selectOption('#label-mode', 'named');
+    await expectTextContains(panelPage, '#label-mode-help', '显示模型来源');
 
     await panelPage.selectOption('#review-mode', 'scoring');
     await expectTextContains(panelPage, '#start-review-btn', '开始评分评审');
@@ -166,26 +189,20 @@ async function expectTextContains(page, selector, expectedText) {
     assert.equal(actual.includes(expectedText), true, `Expected ${selector} to include: ${expectedText}`);
 }
 
-async function clickAndAcceptDialog(page, locator) {
-    const dialogMessagePromise = new Promise((resolve, reject) => {
-        const timeoutId = setTimeout(() => {
-            reject(new Error('Timed out waiting for dialog.'));
-        }, 10000);
-
-        page.once('dialog', async (dialog) => {
-            try {
-                clearTimeout(timeoutId);
-                const message = dialog.message();
-                await dialog.accept();
-                resolve(message);
-            } catch (error) {
-                reject(error);
-            }
-        });
-    });
-
+async function clickAndExpectToast(page, locator, expectedText) {
     await locator.click();
-    return dialogMessagePromise;
+    await expectTextContains(page, '#toast-root', expectedText);
+}
+
+async function expectModelOrder(page, selector, expectedOrder) {
+    const actual = await page.locator(selector).evaluateAll((nodes) => nodes.map((node) => {
+        if (node instanceof HTMLInputElement) {
+            return node.value;
+        }
+        return String(node.textContent || '').replace(/\s+/g, ' ').trim().replace(/^(?:●)?\s*/, '');
+    }));
+
+    assert.deepEqual(actual, expectedOrder);
 }
 
 async function expectInputValueContains(page, selector, expectedText) {

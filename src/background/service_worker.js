@@ -1,3 +1,11 @@
+import {
+    DEFAULT_ANALYSIS_PROVIDER,
+    buildAnalysisProviderOriginPattern,
+    buildOpenAICompatibleAnalysisRequest,
+    normalizeAnalysisProviderConfig,
+    parseOpenAICompatibleAnalysisContent
+} from '../utils/analysis_provider.mjs';
+
 console.log('AI RoundTable Background Service Worker Loaded');
 
 const MODEL_NAMES = ['ChatGPT', 'Grok', 'Gemini', 'Doubao', 'DeepSeek'];
@@ -32,10 +40,7 @@ const RT_KEYS = {
 
 const RT_SCHEMA_VERSION = 2;
 const REVIEW_TIMEOUT_MS = 180000;
-const DEEPSEEK_API_BASE = 'https://api.deepseek.com/v1/chat/completions';
-const DEEPSEEK_MODEL = 'deepseek-chat';
-const DEEPSEEK_API_KEY = 'sk-f2c70e9702cd4036b679f0626d46b5be';
-const DEEPSEEK_TIMEOUT_MS = 25000;
+const DEEPSEEK_MODEL = DEFAULT_ANALYSIS_PROVIDER.model;
 const IDLE_STABILIZE_MS = 1500;
 const IDLE_MIN_CHARS = 80;
 const IDLE_MAX_WAIT_MS = 12000;
@@ -93,6 +98,7 @@ const DEFAULT_SETTINGS = {
     scoringScale: '1-10',
     blindReview: true,
     isolationMode: 'reuse_current_chat',
+    analysisProvider: { ...DEFAULT_ANALYSIS_PROVIDER },
     reviewPromptTemplate: [
         '你是一名客观中立的评审员。',
         '问题：',
@@ -295,6 +301,8 @@ async function handleMessage(message, sender) {
             return handleRoundDelete(message);
         case 'ROUND_CLEAR_EXPIRED':
             return handleRoundClearExpired();
+        case 'ANALYSIS_PROVIDER_TEST':
+            return handleAnalysisProviderTest(message);
         default:
             return { status: 'unknown_type', type: message.type };
     }
@@ -318,6 +326,56 @@ async function handleStatusUpdate(message, sender) {
     }
 
     return { status: 'status_forwarded' };
+}
+
+async function handleAnalysisProviderTest(message) {
+    const provider = normalizeAnalysisProviderConfig({
+        ...(message.provider || {}),
+        enabled: true
+    });
+    const result = await callOpenAICompatibleAnalysisProvider({
+        analysisProvider: provider,
+        messages: [
+            {
+                role: 'system',
+                content: 'Return JSON only. Do not include markdown.'
+            },
+            {
+                role: 'user',
+                content: 'Return exactly this JSON object: {"ok":true}'
+            }
+        ],
+        responseFormatJson: true
+    });
+
+    if (!result.ok) {
+        return {
+            status: 'error',
+            code: result.code || 'analysis_provider_test_failed',
+            message: localizeAnalysisProviderError(result.code || result.error)
+        };
+    }
+
+    const firstBrace = result.content.indexOf('{');
+    const lastBrace = result.content.lastIndexOf('}');
+    const jsonText = firstBrace >= 0 && lastBrace > firstBrace
+        ? result.content.slice(firstBrace, lastBrace + 1)
+        : result.content;
+    try {
+        JSON.parse(jsonText);
+    } catch {
+        return {
+            status: 'error',
+            code: 'analysis_provider_test_json_failed',
+            message: localizeAnalysisProviderError('analysis_provider_test_json_failed')
+        };
+    }
+
+    return {
+        status: 'ok',
+        model: result.model,
+        providerName: result.providerName
+    };
 }
 
 async function discoverTabs() {
@@ -1650,7 +1708,7 @@ async function finalizeEvaluationFromSummary(task, rawResponse, options = {}) {
             rawResponse,
             parsedScores: merged.scores,
             rawParsedScores: rawExtract,
-            normalizedBy: DEEPSEEK_MODEL,
+            normalizedBy: normalizedResult.normalizedBy || DEEPSEEK_MODEL,
             normalizeError: null,
             normalizeLatencyMs,
             parseSource: parseResult.parseSource || 'best_candidate',
@@ -1729,7 +1787,7 @@ async function finalizeEvaluationFromSummary(task, rawResponse, options = {}) {
         rawResponse,
         parsedScores: semanticResult.scores,
         rawParsedScores: rawExtract,
-        normalizedBy: DEEPSEEK_MODEL,
+            normalizedBy: semanticResult.normalizedBy || DEEPSEEK_MODEL,
         normalizeError: null,
         normalizeLatencyMs: normalizeLatencyMs + semanticLatencyMs,
         parseSource: 'semantic_inferred',
@@ -2749,6 +2807,119 @@ function buildNormalizeFailureMessage(localParseError, deepseekError, mergeError
     return `${local} | ${remote} | ${merge}`;
 }
 
+async function getAnalysisProviderConfig() {
+    const current = await chrome.storage.local.get(RT_KEYS.settings);
+    return normalizeAnalysisProviderConfig(current?.[RT_KEYS.settings]?.analysisProvider || {});
+}
+
+async function callOpenAICompatibleAnalysisProvider({
+    analysisProvider = null,
+    messages = [],
+    responseFormatJson = true
+} = {}) {
+    const provider = normalizeAnalysisProviderConfig(analysisProvider || await getAnalysisProviderConfig());
+    const request = buildOpenAICompatibleAnalysisRequest(provider, messages, { responseFormatJson });
+    if (!request.ok) {
+        return {
+            ok: false,
+            code: request.code || 'analysis_provider_config_invalid',
+            error: request.error || 'analysis_provider_config_invalid'
+        };
+    }
+
+    const hasPermission = await hasAnalysisProviderPermission(request.provider);
+    if (!hasPermission) {
+        return {
+            ok: false,
+            code: 'analysis_provider_permission_missing',
+            error: 'analysis_provider_permission_missing'
+        };
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), request.timeoutMs);
+    let response;
+    try {
+        response = await fetch(request.endpoint, {
+            ...request.requestInit,
+            signal: controller.signal
+        });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            return {
+                ok: false,
+                code: 'analysis_provider_timeout',
+                error: 'analysis_provider_timeout'
+            };
+        }
+        return {
+            ok: false,
+            code: 'analysis_provider_request_failed',
+            error: 'analysis_provider_request_failed'
+        };
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
+    if (!response.ok) {
+        return {
+            ok: false,
+            code: `analysis_provider_http_${response.status}`,
+            error: `analysis_provider_http_${response.status}`
+        };
+    }
+
+    let data;
+    try {
+        data = await response.json();
+    } catch {
+        return {
+            ok: false,
+            code: 'analysis_provider_json_failed',
+            error: 'analysis_provider_json_failed'
+        };
+    }
+
+    const parsed = parseOpenAICompatibleAnalysisContent(data);
+    if (!parsed.ok) {
+        return parsed;
+    }
+
+    return {
+        ok: true,
+        content: parsed.content,
+        model: request.provider.model,
+        providerName: request.provider.name
+    };
+}
+
+async function hasAnalysisProviderPermission(provider) {
+    if (!chrome.permissions?.contains) {
+        return true;
+    }
+    try {
+        const origins = [buildAnalysisProviderOriginPattern(provider)];
+        return await chrome.permissions.contains({ origins });
+    } catch {
+        return false;
+    }
+}
+
+function localizeAnalysisProviderError(code) {
+    const value = String(code || '').toLowerCase();
+    if (value.includes('disabled')) return '分析模型尚未启用。';
+    if (value.includes('api_key_missing')) return '请先填写分析模型 API Key。';
+    if (value.includes('permission_missing')) return '浏览器尚未授权访问该分析接口地址。';
+    if (value.includes('timeout')) return '分析模型请求超时，请稍后重试或调大超时时间。';
+    if (value.includes('http_401') || value.includes('http_403')) return '分析模型鉴权失败，请检查 API Key。';
+    if (value.includes('http_404')) return '分析模型接口或模型名不可用，请检查接口地址和模型名。';
+    if (value.includes('http_429')) return '分析模型请求过于频繁或额度不足，请稍后重试。';
+    if (value.includes('http_')) return '分析模型接口返回错误，请检查配置后重试。';
+    if (value.includes('json')) return '分析模型没有按 JSON 格式返回，请检查模型是否支持 JSON 输出。';
+    if (value.includes('missing_content')) return '分析模型没有返回可解析的文本内容。';
+    return '分析模型测试失败，请检查接口地址、模型名和 Key。';
+}
+
 async function normalizeWithDeepSeek(rawText, blindMapSlots, options = {}) {
     const slots = [...new Set(
         (Array.isArray(blindMapSlots) ? blindMapSlots : Object.keys(blindMapSlots || {}))
@@ -2770,7 +2941,6 @@ async function normalizeWithDeepSeek(rawText, blindMapSlots, options = {}) {
         'All numeric fields must be numbers in range 1-10.',
         'Do not rewrite or summarize any reason/evidence text. If unavailable, omit reason/evidence.'
     ].join('\n');
-
     const userPrompt = [
         `Allowed slots: ${slots.join(', ')}`,
         'Normalize the following raw evaluation text into strict JSON.',
@@ -2780,57 +2950,22 @@ async function normalizeWithDeepSeek(rawText, blindMapSlots, options = {}) {
         'RAW_EVALUATION_TEXT_END'
     ].join('\n');
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_TIMEOUT_MS);
-
-    let response;
-    try {
-        response = await fetch(DEEPSEEK_API_BASE, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${DEEPSEEK_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: DEEPSEEK_MODEL,
-                temperature: 0,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt }
-                ]
-            }),
-            signal: controller.signal
-        });
-    } catch (error) {
-        if (error?.name === 'AbortError') {
-            return { ok: false, error: `DeepSeek timeout after ${DEEPSEEK_TIMEOUT_MS}ms` };
-        }
-        return { ok: false, error: `DeepSeek request failed: ${error.message || String(error)}` };
-    } finally {
-        clearTimeout(timeoutId);
+    const remote = await callOpenAICompatibleAnalysisProvider({
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ],
+        responseFormatJson: true
+    });
+    if (!remote.ok) {
+        return { ok: false, error: remote.error || remote.code || 'analysis_provider_failed' };
     }
 
-    if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        return {
-            ok: false,
-            error: `DeepSeek HTTP ${response.status}: ${String(body || '').slice(0, 240)}`
-        };
+    const parsed = parseDeepSeekNormalization(remote.content, slots, options);
+    if (parsed.ok) {
+        parsed.normalizedBy = remote.model || DEEPSEEK_MODEL;
     }
-
-    let data;
-    try {
-        data = await response.json();
-    } catch (error) {
-        return { ok: false, error: `DeepSeek JSON decode failed: ${error.message}` };
-    }
-
-    const content = data?.choices?.[0]?.message?.content;
-    if (!content || typeof content !== 'string') {
-        return { ok: false, error: 'DeepSeek response missing choices[0].message.content' };
-    }
-
-    return parseDeepSeekNormalization(content, slots, options);
+    return parsed;
 }
 
 function parseDeepSeekNormalization(text, slots, options = {}) {
@@ -2891,7 +3026,6 @@ async function inferSemanticScoresWithDeepSeek(rawText, blindMapSlots, options =
         'If evidence is weak, set lower confidence.',
         'Do not output markdown, comments, or explanations.'
     ].join('\n');
-
     const userPrompt = [
         `Allowed slots: ${slots.join(', ')}`,
         `Minimum confidence required by caller: ${minConfidence.toFixed(2)}`,
@@ -2902,61 +3036,26 @@ async function inferSemanticScoresWithDeepSeek(rawText, blindMapSlots, options =
         'RAW_EVALUATION_TEXT_END'
     ].join('\n');
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_TIMEOUT_MS);
-
-    let response;
-    try {
-        response = await fetch(DEEPSEEK_API_BASE, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${DEEPSEEK_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: DEEPSEEK_MODEL,
-                temperature: 0,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt }
-                ]
-            }),
-            signal: controller.signal
-        });
-    } catch (error) {
-        if (error?.name === 'AbortError') {
-            return { ok: false, error: `DeepSeek timeout after ${DEEPSEEK_TIMEOUT_MS}ms` };
-        }
-        return { ok: false, error: `DeepSeek request failed: ${error.message || String(error)}` };
-    } finally {
-        clearTimeout(timeoutId);
+    const remote = await callOpenAICompatibleAnalysisProvider({
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ],
+        responseFormatJson: true
+    });
+    if (!remote.ok) {
+        return { ok: false, error: remote.error || remote.code || 'analysis_provider_failed' };
     }
 
-    if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        return {
-            ok: false,
-            error: `DeepSeek HTTP ${response.status}: ${String(body || '').slice(0, 240)}`
-        };
-    }
-
-    let data;
-    try {
-        data = await response.json();
-    } catch (error) {
-        return { ok: false, error: `DeepSeek JSON decode failed: ${error.message}` };
-    }
-
-    const content = data?.choices?.[0]?.message?.content;
-    if (!content || typeof content !== 'string') {
-        return { ok: false, error: 'DeepSeek response missing choices[0].message.content' };
-    }
-
-    return parseDeepSeekSemanticInference(content, slots, {
+    const parsed = parseDeepSeekSemanticInference(remote.content, slots, {
         logContext: options.logContext || null,
         minConfidence,
         weights: options.weights || DEFAULT_SETTINGS.weights
     });
+    if (parsed.ok) {
+        parsed.normalizedBy = remote.model || DEEPSEEK_MODEL;
+    }
+    return parsed;
 }
 
 function parseDeepSeekSemanticInference(text, slots, options = {}) {
@@ -3208,7 +3307,8 @@ function mergeSettings(partial) {
         weights: {
             ...DEFAULT_SETTINGS.weights,
             ...((partial && partial.weights) || {})
-        }
+        },
+        analysisProvider: normalizeAnalysisProviderConfig(partial?.analysisProvider || {})
     };
 
     merged.reviewPromptTemplate = normalizeTemplateSetting(

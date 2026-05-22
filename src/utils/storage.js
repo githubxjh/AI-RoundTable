@@ -1,3 +1,8 @@
+import {
+    DEFAULT_ANALYSIS_PROVIDER,
+    normalizeAnalysisProviderConfig
+} from './analysis_provider.mjs';
+
 export const RT_SCHEMA_VERSION = 2;
 export const RT_KEYS = {
     schemaVersion: 'rt_schema_version',
@@ -26,6 +31,7 @@ export const DEFAULT_SETTINGS = {
     scoringScale: '1-10',
     blindReview: true,
     isolationMode: 'reuse_current_chat',
+    analysisProvider: { ...DEFAULT_ANALYSIS_PROVIDER },
     reviewPromptTemplate: [
         '你是一名客观中立的评审员。',
         '问题：',
@@ -131,14 +137,15 @@ const LEGACY_DISCUSSION_TEMPLATE = [
     'No scoring is required. No JSON is required. Reply in natural language.'
 ].join('\n');
 
-function mergeSettings(partial = {}) {
+export function mergeSettings(partial = {}) {
     const merged = {
         ...DEFAULT_SETTINGS,
         ...partial,
         weights: {
             ...DEFAULT_SETTINGS.weights,
             ...(partial.weights || {})
-        }
+        },
+        analysisProvider: normalizeAnalysisProviderConfig(partial.analysisProvider || {})
     };
 
     merged.reviewPromptTemplate = normalizeTemplateSetting(

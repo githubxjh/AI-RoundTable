@@ -16,11 +16,16 @@
     "https://grok.com/*",
     "https://x.com/*",
     "https://chat.deepseek.com/*",
+    "https://api.deepseek.com/*",
     "https://www.doubao.com/*",
     "https://flow-chat.gf.bytedance.net/*"
   ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
   "background": {
-    "service_worker": "src/background/service_worker.js"
+    "service_worker": "src/background/service_worker.js",
+    "type": "module"
   },
   "side_panel": {
     "default_path": "src/sidepanel/panel.html"

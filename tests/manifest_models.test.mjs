@@ -22,6 +22,9 @@ function getModelNamesFromServiceWorker() {
 
 runTest('manifest injects DeepSeek and does not inject Claude', () => {
     assert.ok(manifest.host_permissions.includes('https://chat.deepseek.com/*'));
+    assert.ok(manifest.host_permissions.includes('https://api.deepseek.com/*'));
+    assert.ok(manifest.optional_host_permissions.includes('https://*/*'));
+    assert.equal(manifest.background.type, 'module');
     assert.equal(manifest.host_permissions.includes('https://claude.ai/*'), false);
 
     const scriptEntries = manifest.content_scripts || [];
