@@ -55,9 +55,14 @@
 
 ## 5. AI-RoundTable 约定
 
-- 做大一点的工作前，先读 `AGENTS.md`、`.claude/STATUS.md`、`.claude/HANDOFF.md`、`TESTING.md` 和 `package.json`。
+- 做大一点的工作前，先读 `AGENTS.md`、`.claude/STATUS.md`、`.claude/HANDOFF.md`、`docs/agent-continuity.md`、`docs/debugging-convergence.md`、`TESTING.md` 和 `package.json`。
 - Windows 上统一用 `cmd /c npm.cmd ...`。
 - ChatGPT、Claude、Grok、Gemini、Doubao、DeepSeek 这些模型名保持英文。
 - Lite/public 和 Advanced/local 的附件路径要分开看。
 - 真正的浏览器检查优先走 `TESTING.md` 和 `docs/self-iteration.md` 里写的 attach-mode 流程。
+- live、群发、附件、CDP、Chrome profile 或模型适配器问题，先按 `docs/debugging-convergence.md` 写最小失败样本、字段级成功标准和单假设验证，不要直接在全模型矩阵里猜。
+- 30-45 分钟没有新增证据时，先停下来外查官方文档或上游 issue，再继续改。
 - 遇到登录、验证码、人工验证、2FA 或账号阻断时，要停下来并明确说明卡在哪里。
+- 上下文可能被压缩时，先更新 `.claude/HANDOFF.md`。它必须能让下一个 agent 不看聊天记录也知道当前停止线、浏览器边界、验证证据和下一步。
+- 如果用户说先别改、先补规范、先写交接，就停止功能修复和 live 测试，只做文档/流程收口。
+- 用户要求暂存时，先看 `git status --short` 和相关 diff，只暂存本轮范围内的文件；不要顺手暂存无关源码、生成物或前轮遗留改动。提交、拉取、回档都要先说明风险，未获明确要求不要自动执行。

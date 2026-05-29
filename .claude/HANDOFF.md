@@ -1,32 +1,142 @@
-# 交接 - AI-RoundTable 工程骨架
+# HANDOFF - AI-RoundTable
 
-## 已完成
+## TL;DR
 
-- 添加了根目录项目规则 `AGENTS.md`。
-- 添加了 Claude 兼容的行为说明 `CLAUDE.md`。
-- 添加了自迭代运行手册 `docs/self-iteration.md`。
-- 添加了 `scripts/iterate.mjs` 和 `scripts/lib/self_iteration.mjs`，作为统一的本地/真实浏览器验证入口。
-- 添加了 `tests/self_iteration.test.mjs`。
-- 在 `package.json` 里接上了 `test:helpers`、`iterate` 和 `iterate:live`。
-- 已验证 `cmd /c npm.cmd run test:helpers` 通过。
-- 已验证 `cmd /c npm.cmd run iterate -- --skip-smoke` 通过，并写出了 `output/playwright/iteration/last-run.md`。
+User approved a docs/process cleanup after the attachment group-broadcast debugging loop failed to converge quickly enough. This pass is documentation-only: improve test/debug workflow and handoff rules, but do not continue live browser testing or attachment feature fixes.
 
-## 进行中
+## Current Stop Line
 
-- 分支：`master` @ `849dc55`
-- 这次骨架工作开始前，工作区里就已经有其他附件上传实现改动。不要回滚它们。
-- `cmd /c npm.cmd run test:all` 现在被缺失的 Playwright Chromium 阻塞，不是被这次新增的 helper 测试阻塞。
+> 可以，改吧，加油
 
-## 下一步可验证目标
+## Working Tree
 
-1. 清理任何残留的 Playwright 安装进程/锁，如果还有 `C:\Users\xiepro\AppData\Local\ms-playwright\__dirlock`。
-2. 反复运行 `cmd /c npx.cmd playwright install chromium`，直到 `C:\Users\xiepro\AppData\Local\ms-playwright\chromium-1217\chrome-win64\chrome.exe` 真正存在。
-3. 重新跑 `cmd /c npm.cmd run test:all`。
-4. 如果要验证 live 模型改动，先跑 `cmd /c npm.cmd run test:chrome:launch`，再跑 `cmd /c npm.cmd run iterate:live`。
+Docs changed in this continuation:
 
-## 备注
+- `.claude/HANDOFF.md`
+- `.claude/STATUS.md`
+- `AGENTS.md`
+- `CLAUDE.md`
+- `TESTING.md`
+- `docs/agent-continuity.md`
+- `docs/debugging-convergence.md`
+- `docs/self-iteration.md`
 
-- 真正的浏览器流程是通过 CDP attach-mode Chrome 完成的，使用的专用 profile 在 `tools/browser-profile/chrome-user-data`。
-- 证据要继续放在 `output/playwright/`，尤其是 `output/playwright/iteration/` 和 `output/playwright/live/`。
-- live 自动化遇到登录、验证码、验证、2FA 或账号阻断时，要停下来。
-- 不要把系统 Chrome 当成 Playwright Chromium smoke 线的隐式替代；验证已经说明它能启动，但可能拿不到扩展 service worker。
+Git staging scope for this continuation:
+
+- Stage only the process/documentation files above.
+- Do not stage the existing source/test/generated-output repair changes unless the user explicitly expands scope.
+- Do not stage untracked `tools/`.
+
+Small code/test edits made immediately before the stop line:
+
+- `scripts/lib/playwright_env.mjs`: added `DEFAULT_ADVANCED_CDP_PORT = 9333` and optional `defaultCdpPort`.
+- `scripts/launch_advanced_chrome.mjs`: uses Advanced default CDP port and prints the Advanced profile root.
+- `tests/playwright_env.test.mjs`: covers Advanced default port.
+- `tests/attachment_live_script.test.mjs`: asserts the Advanced launcher uses the dedicated default port.
+
+Existing modified files from the earlier repair thread, not fully reviewed in this continuation:
+
+- `package.json`
+- `scripts/launch_real_chrome.mjs`
+- `scripts/lib/chrome_attach.mjs`
+- `scripts/lib/playwright_env.mjs`
+- `scripts/lib/playwright_runtime.mjs`
+- `scripts/test_attachment.mjs`
+- `scripts/test_live.mjs`
+- `src/background/advanced_attachment_service.mjs`
+- `src/background/service_worker.js`
+- `src/content/adapter_base.js`
+- `src/content/adapter_gemini.js`
+- `src/content/adapter_gpt.js`
+- `src/content/adapter_grok.js`
+- `src/utils/attachment_capabilities.mjs`
+- multiple tests under `tests/`
+- generated Advanced output under `output/advanced-release/`
+
+New files from the earlier repair thread:
+
+- `scripts/launch_advanced_chrome.mjs`
+- `scripts/test_group_broadcast.mjs`
+- `tests/attachment_live_script.test.mjs`
+- `tests/gemini_adapter.test.mjs`
+- `tests/grok_adapter.test.mjs`
+
+Unknown/unowned:
+
+- `tools/` is untracked in `git status`. Do not delete it unless the user explicitly asks.
+
+## Browser Boundary
+
+Correct AI-RoundTable Advanced live line:
+
+- CDP port: `9333`
+- profile: `tools/browser-profile/chrome-user-data-advanced`
+- extension package: `output/advanced-release/AI-RoundTable-advanced`
+- launcher: `cmd /c npm.cmd run test:chrome:launch:advanced`
+
+Normal attach/live text line:
+
+- profile: `tools/browser-profile/chrome-user-data`
+- launcher: `cmd /c npm.cmd run test:chrome:launch`
+
+Do not touch:
+
+- Port `9222` if it belongs to `D:\丹纳赫实施资料上传\.chrome-upload-profile`.
+- Any Chrome process unless its command line clearly contains both the expected AI-RoundTable profile and the expected port.
+
+Before any live claim, verify `chrome://version` or the process command line.
+
+## Verified Evidence
+
+Evidence inherited from the prior repair thread, not rerun after the stop line:
+
+- `node tests\gemini_adapter.test.mjs` passed.
+- `node tests\attachment_live_script.test.mjs` passed.
+- `node tests\playwright_env.test.mjs` passed.
+- `node tests\attachment_capabilities.test.mjs` passed.
+- `cmd /c npm.cmd run test:live -- Gemini` passed on `9333`.
+- `cmd /c npm.cmd run test:live:group` returned all five models in `sentModels`.
+- Group evidence: `output/playwright/broadcast-live/summary.json` and `output/playwright/broadcast-live/broadcast.log`.
+- Attachment evidence: `output/playwright/attachment-test/attachment.log`.
+
+Not rerun after the documentation pivot:
+
+- `cmd /c npm.cmd run test:helpers`
+- `cmd /c npm.cmd run test:live:group`
+- `node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek`
+
+## Not Proven
+
+- Attachment auto-upload is not proven for ChatGPT, Gemini, Grok, Doubao, or DeepSeek.
+- Current conservative runtime reports attachments as `manual_required` or text fallback/degraded.
+- A model text reply after an attachment broadcast is not proof that the file uploaded.
+- Attachment success requires `attachmentResults[].attachmentStatus === "supported"`, `method === "cdp_advanced"`, and `code === "attachment_cdp_uploaded"`.
+- The newest small Advanced-port code/test edits have not been verified with a fresh test run.
+
+## Next Safe Steps
+
+If the user wants only documentation cleanup:
+
+1. Read `docs/agent-continuity.md`, `docs/debugging-convergence.md`, `AGENTS.md`, `TESTING.md`, and `docs/self-iteration.md`.
+2. Check whether the debugging packet / convergence gate needs more detail for the next repair.
+3. Run no live browser tests unless the user explicitly resumes the repair/testing work.
+
+If the user resumes the original Gemini/group/attachment repair:
+
+1. Run `cmd /c npm.cmd run test:helpers`.
+2. Regenerate Advanced package with `cmd /c npm.cmd run release:advanced`.
+3. Start the Advanced browser with `cmd /c npm.cmd run test:chrome:launch:advanced`.
+4. Run `cmd /c npm.cmd run test:live:group`.
+5. Run `node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek`.
+6. Report attachment results strictly from `attachmentResults[]`.
+
+## Do Not Do
+
+- Do not keep fixing functionality while the user has asked to pause and improve handoff norms.
+- Do not start another attachment repair without first writing a `Debugging Packet` from `docs/debugging-convergence.md`.
+- Do not claim attachment success from text fallback.
+- Do not use or kill the `9222` Danaher Chrome.
+- Do not rely on the in-app browser at `http://127.0.0.1:9333/` as proof of the real Chrome session.
+- Do not assume generated `output/advanced-release/` files are current unless `release:advanced` was just run.
+- Do not omit changed generated files from the final status; they are part of the current dirty tree.
+- Do not commit, pull, push, or rollback without first reporting staged/unstaged state and getting explicit user intent.

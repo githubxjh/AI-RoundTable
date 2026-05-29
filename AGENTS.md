@@ -24,6 +24,8 @@
    - `CLAUDE.md`
    - `.claude/STATUS.md`
    - `.claude/HANDOFF.md`
+   - `docs/agent-continuity.md`
+   - `docs/debugging-convergence.md`
    - `TESTING.md`
    - `package.json`
 2. 先把需求转成可验证目标，再改代码。
@@ -31,6 +33,29 @@
 4. 只做最小有用改动。
 5. 先跑最窄但有意义的测试；如果改动影响共享行为，再扩大验证。
 6. 任务会改变项目状态，或者留下了有价值的续接点时，更新 `.claude/HANDOFF.md`。
+
+## 跨会话与压缩续接
+
+- 长任务、live 浏览器任务、上下文即将压缩、或者用户要求“继续”前后，必须先读并维护 `docs/agent-continuity.md` 和 `.claude/HANDOFF.md`。
+- `.claude/HANDOFF.md` 是压缩后的恢复入口，不是聊天摘要。它必须写清当前停止线、工作区改动、浏览器边界、已验证证据、未证明事项、下一步安全命令和不要做的事。
+- 如果用户明确暂停功能修复转向工程规范或交接文档，不要继续跑 live 测试或扩大源码修改；先把交接和规则补齐。
+- 不要从记忆或上轮聊天直接声称 live 结果。必须引用当前仓库里的命令结果或 `output/playwright/` 证据路径。
+
+## Git 状态管理
+
+- 这个项目会频繁迭代。完成一段明确范围的改动后，如果用户要求或上下文会继续切换，可以暂存本轮相关文件，方便后续提交、回档和审查。
+- 暂存前必须运行 `git status --short`，并用 `git diff -- <files>` 确认文件属于当前任务；不要把无关源码、生成产物、`tools/` 或前一轮遗留改动一并暂存。
+- 如果一个文件已有他人/前轮改动，只在确认整份文件都属于当前流程收口时才整文件暂存；否则说明无法安全拆分，等待用户确认或使用更窄的补丁式暂存。
+- 提交、拉取、回档前先说明当前分支、staged/unstaged 状态和风险。没有用户明确要求，不要自动 `git commit`、`git pull`、`git push`。
+- 回档默认用 `git restore --staged <file>` 取消暂存，或用 `git revert` / `git restore <file>` 做安全回滚；禁止未确认的 `git reset --hard` 和 `git clean -fd`。
+
+## 调试收敛规则
+
+- 涉及 live 站点、群发、附件、CDP、Chrome profile 或模型适配器的问题，先按 `docs/debugging-convergence.md` 写出最小失败样本和字段级成功标准。
+- 每轮调试只验证一个假设；改代码前写清本轮命令、证据路径、预期证伪结果和下一步决策。
+- 附件群发必须从单模型、单文件、单动作逐层放大到双模型和五模型；不要直接在全矩阵里猜。
+- 30-45 分钟没有新增证据，或问题落在 Playwright、Chrome extension、MV3、`chrome.debugger`、CDP、文件 input、反自动化边界上时，先做外部检索，再继续改。
+- 如果连续两轮没有新增证据，停止功能修改，更新 `.claude/HANDOFF.md`，说明已排除项、未证明项和下一条最小验证命令。
 
 ## 测试命令
 
@@ -51,6 +76,16 @@ cmd /c npm.cmd run iterate:live
 ```
 
 attach-mode live 会使用 `tools/browser-profile/chrome-user-data` 下的专用 profile。遇到登录、验证码、人工验证、2FA、账号恢复或站点阻断时，要停下来并明确上报，不要硬推自动化。
+
+Advanced/local 附件验证使用独立入口：
+
+```powershell
+cmd /c npm.cmd run release:advanced
+cmd /c npm.cmd run test:chrome:launch:advanced
+node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek
+```
+
+Advanced 线默认应使用 `9333`、`tools/browser-profile/chrome-user-data-advanced` 和 `output/advanced-release/AI-RoundTable-advanced`。不要误连其他项目的 CDP Chrome。
 
 ## 浏览器自动化边界
 
