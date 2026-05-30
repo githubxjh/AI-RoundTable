@@ -117,6 +117,8 @@ Before handing off or staging work, run `git status --short` and separate:
 
 Stage only the current task scope unless the user explicitly asks for a broader stage. Do not stage unrelated generated output or previous repair work just because it is already dirty.
 
+For this repo, a verified iteration should normally end in a commit, not just a staged index. Treat the commit as the rollback anchor; report the commit hash and the verification evidence. Leave changes staged-only only when tests are still failing, scope is intentionally awaiting review, or the staged set cannot be made into a safe single checkpoint yet.
+
 For rollback, prefer `git restore --staged <file>` to unstage, `git restore <file>` only for confirmed current-task edits, and `git revert` for committed history. Do not run `git reset --hard` or `git clean -fd` without explicit confirmation.
 
 ## Final Response Rule

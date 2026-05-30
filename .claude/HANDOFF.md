@@ -104,4 +104,4 @@ Cheap Council:
 - Do not claim attachment success from fallback text.
 - Do not enable Advanced CDP capabilities for other models without model-specific live evidence.
 - Do not use or kill the `9222` Danaher Chrome.
-- Do not commit, pull, push, or rollback without explicit user confirmation.
+- The user has clarified this repo should use commits as rollback anchors after verified iteration checkpoints; do not stop at staged-only when the scope is clear and tests have passed. Still do not pull, push, or run destructive rollback/history-editing commands without explicit confirmation.
