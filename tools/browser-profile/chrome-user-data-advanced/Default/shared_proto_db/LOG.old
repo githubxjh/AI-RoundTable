@@ -1,0 +1,37 @@
+2026/05/30-10:06:45.382 2a38 Reusing MANIFEST C:\Users\xiepro\Desktop\AI-RoundTable\tools\browser-profile\chrome-user-data-advanced\Default\shared_proto_db/MANIFEST-000001
+2026/05/30-10:06:45.384 2a38 Recovering log #221
+2026/05/30-10:06:45.385 2a38 Reusing old log C:\Users\xiepro\Desktop\AI-RoundTable\tools\browser-profile\chrome-user-data-advanced\Default\shared_proto_db/000221.log 
+2026/05/30-10:07:08.269 54dc Level-0 table #225: started
+2026/05/30-10:07:08.282 54dc Level-0 table #225: 1851292 bytes OK
+2026/05/30-10:07:08.284 54dc Delete type=0 #221
+2026/05/30-10:07:08.285 54dc Compacting 4@0 + 1@1 files
+2026/05/30-10:07:08.300 54dc Generated table #226@0: 1033 keys, 1860655 bytes
+2026/05/30-10:07:08.300 54dc Compacted 4@0 + 1@1 files => 1860655 bytes
+2026/05/30-10:07:08.301 54dc compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/05/30-10:07:08.302 54dc Delete type=2 #216
+2026/05/30-10:07:08.302 54dc Delete type=2 #218
+2026/05/30-10:07:08.302 54dc Delete type=2 #220
+2026/05/30-10:07:08.302 54dc Delete type=2 #222
+2026/05/30-10:07:08.302 54dc Delete type=2 #225
+2026/05/30-10:07:08.441 54dc Level-0 table #228: started
+2026/05/30-10:07:08.453 54dc Level-0 table #228: 1829387 bytes OK
+2026/05/30-10:07:08.455 54dc Delete type=0 #224
+2026/05/30-10:07:15.446 8838 Level-0 table #230: started
+2026/05/30-10:07:15.457 8838 Level-0 table #230: 1829388 bytes OK
+2026/05/30-10:07:15.459 8838 Delete type=0 #227
+2026/05/30-10:07:48.131 54dc Level-0 table #232: started
+2026/05/30-10:07:48.136 d50 Current memtable full; waiting...
+2026/05/30-10:07:48.142 54dc Level-0 table #232: 1831762 bytes OK
+2026/05/30-10:07:48.144 54dc Delete type=0 #229
+2026/05/30-10:07:48.145 54dc Level-0 table #234: started
+2026/05/30-10:07:48.158 54dc Level-0 table #234: 1829388 bytes OK
+2026/05/30-10:07:48.161 54dc Delete type=0 #231
+2026/05/30-10:07:48.162 54dc Compacting 4@0 + 1@1 files
+2026/05/30-10:07:48.181 54dc Generated table #235@0: 1033 keys, 1858838 bytes
+2026/05/30-10:07:48.181 54dc Compacted 4@0 + 1@1 files => 1858838 bytes
+2026/05/30-10:07:48.182 54dc compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/05/30-10:07:48.183 54dc Delete type=2 #226
+2026/05/30-10:07:48.183 54dc Delete type=2 #228
+2026/05/30-10:07:48.183 54dc Delete type=2 #230
+2026/05/30-10:07:48.183 54dc Delete type=2 #232
+2026/05/30-10:07:48.183 54dc Delete type=2 #234

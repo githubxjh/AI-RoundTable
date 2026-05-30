@@ -1,0 +1,8 @@
+2026/04/02-22:30:02.385 7bc8 Reusing MANIFEST C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\WebStorage\191\IndexedDB\indexeddb.leveldb/MANIFEST-000001
+2026/04/02-22:30:02.386 7bc8 Recovering log #3
+2026/04/02-22:30:02.387 7bc8 Reusing old log C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\WebStorage\191\IndexedDB\indexeddb.leveldb/000003.log 
+2026/04/02-22:30:14.274 7bbc Manual compaction at level-0 from '\x00\x02\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x03\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/04/02-22:32:27.532 7bc8 Level-0 table #5: started
+2026/04/02-22:32:27.536 7bc8 Level-0 table #5: 59610 bytes OK
+2026/04/02-22:32:27.538 7bc8 Delete type=0 #3
+2026/04/02-22:32:27.539 7bc8 Manual compaction at level-0 from (begin) .. (end); will stop at (end)

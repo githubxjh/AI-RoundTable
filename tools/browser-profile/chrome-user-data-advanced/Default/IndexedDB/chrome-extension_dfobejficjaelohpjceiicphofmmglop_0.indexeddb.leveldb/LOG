@@ -1,0 +1,6 @@
+2026/02/20-16:49:11.228 77c Creating DB C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\chrome-extension_dfobejficjaelohpjceiicphofmmglop_0.indexeddb.leveldb since it was missing.
+2026/02/20-16:49:11.237 77c Reusing MANIFEST C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\chrome-extension_dfobejficjaelohpjceiicphofmmglop_0.indexeddb.leveldb/MANIFEST-000001
+2026/02/20-16:49:11.249 ca24 Level-0 table #5: started
+2026/02/20-16:49:11.254 ca24 Level-0 table #5: 711 bytes OK
+2026/02/20-16:49:11.258 ca24 Delete type=0 #3
+2026/02/20-16:49:11.259 ca24 Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)

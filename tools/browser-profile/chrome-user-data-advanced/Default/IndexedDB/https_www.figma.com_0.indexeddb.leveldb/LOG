@@ -1,0 +1,34 @@
+2026/03/14-20:45:14.083 a350 Reusing MANIFEST C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_www.figma.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/03/14-20:45:14.084 a350 Recovering log #10
+2026/03/14-20:45:14.084 a350 Reusing old log C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_www.figma.com_0.indexeddb.leveldb/000010.log 
+2026/03/14-20:45:14.085 a350 Delete type=2 #8
+2026/03/14-20:45:15.924 7ddc Level-0 table #15: started
+2026/03/14-20:45:15.927 7ddc Level-0 table #15: 1222 bytes OK
+2026/03/14-20:45:15.930 7ddc Delete type=0 #10
+2026/03/14-20:45:15.930 a350 Manual compaction at level-0 from '\x00\x07\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x08\x00\x00\x00' @ 0 : 0; will stop at '\x00\x07\x00\x00\x05' @ 385 : 1
+2026/03/14-20:45:15.931 a350 Compacting 1@0 + 1@1 files
+2026/03/14-20:45:15.933 a350 Generated table #16@0: 46 keys, 1299 bytes
+2026/03/14-20:45:15.933 a350 Compacted 1@0 + 1@1 files => 1299 bytes
+2026/03/14-20:45:15.935 a350 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/03/14-20:45:15.936 a350 Delete type=2 #15
+2026/03/14-20:45:15.937 a350 Manual compaction at level-0 from '\x00\x07\x00\x00\x05' @ 385 : 1 .. '\x00\x08\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/03/14-21:12:14.353 a024 Level-0 table #18: started
+2026/03/14-21:12:14.357 a024 Level-0 table #18: 231 bytes OK
+2026/03/14-21:12:14.360 a024 Delete type=2 #12
+2026/03/14-21:12:14.360 a024 Delete type=0 #14
+2026/03/14-21:12:14.361 a024 Manual compaction at level-0 from (begin) .. (end); will stop at '\x00\x00\x00\x002\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00' @ 399 : 0
+2026/03/14-21:12:14.361 a024 Compacting 1@0 + 1@1 files
+2026/03/14-21:12:14.363 a024 Generated table #19@0: 47 keys, 1297 bytes
+2026/03/14-21:12:14.364 a024 Compacted 1@0 + 1@1 files => 1297 bytes
+2026/03/14-21:12:14.365 a024 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/03/14-21:12:14.365 a024 Delete type=2 #16
+2026/03/14-21:12:14.365 a024 Delete type=2 #18
+2026/03/14-21:12:14.367 a024 Manual compaction at level-0 from '\x00\x00\x00\x002\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00' @ 399 : 0 .. (end); will stop at (end)
+2026/03/14-21:12:14.367 a024 Manual compaction at level-1 from (begin) .. (end); will stop at '\x00\x04\x01\x02\x013\x00[\x00D\x00E\x00F\x00A\x00U\x00L\x00T\x00]\x00!\x001\x00:\x008\x001\x002\x000\x001\x005\x001\x006\x003\x003\x003\x008\x00:\x00w\x00e\x00b\x00:\x000\x00c\x003\x001\x001\x004\x008\x00f\x004\x000\x00e\x001\x008\x00d\x00e\x008\x00e\x002\x00a\x001\x003\x003' @ 375 : 1
+2026/03/14-21:12:14.367 a024 Compacting 1@1 + 1@2 files
+2026/03/14-21:12:14.370 a024 Generated table #20@1: 95 keys, 1980 bytes
+2026/03/14-21:12:14.370 a024 Compacted 1@1 + 1@2 files => 1980 bytes
+2026/03/14-21:12:14.371 a024 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/03/14-21:12:14.372 a024 Delete type=2 #5
+2026/03/14-21:12:14.372 a024 Delete type=2 #19
+2026/03/14-21:12:14.373 a024 Manual compaction at level-1 from '\x00\x04\x01\x02\x013\x00[\x00D\x00E\x00F\x00A\x00U\x00L\x00T\x00]\x00!\x001\x00:\x008\x001\x002\x000\x001\x005\x001\x006\x003\x003\x003\x008\x00:\x00w\x00e\x00b\x00:\x000\x00c\x003\x001\x001\x004\x008\x00f\x004\x000\x00e\x001\x008\x00d\x00e\x008\x00e\x002\x00a\x001\x003\x003' @ 375 : 1 .. (end); will stop at (end)

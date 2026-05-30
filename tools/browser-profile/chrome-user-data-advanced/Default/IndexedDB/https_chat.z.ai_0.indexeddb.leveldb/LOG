@@ -1,0 +1,7 @@
+2026/03/21-21:03:50.534 7030 Reusing MANIFEST C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_chat.z.ai_0.indexeddb.leveldb/MANIFEST-000001
+2026/03/21-21:03:50.535 7030 Recovering log #4
+2026/03/21-21:03:50.535 7030 Reusing old log C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_chat.z.ai_0.indexeddb.leveldb/000004.log 
+2026/03/21-21:03:50.603 23a8 Level-0 table #8: started
+2026/03/21-21:03:50.607 23a8 Level-0 table #8: 1087 bytes OK
+2026/03/21-21:03:50.610 23a8 Delete type=0 #4
+2026/03/21-21:03:50.610 7030 Manual compaction at level-0 from '\x00\x02\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x03\x00\x00\x00' @ 0 : 0; will stop at (end)

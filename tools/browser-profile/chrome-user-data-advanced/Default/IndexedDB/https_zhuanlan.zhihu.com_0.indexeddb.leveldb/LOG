@@ -1,0 +1,7 @@
+2026/04/02-21:09:24.816 7bc8 Reusing MANIFEST C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_zhuanlan.zhihu.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/04/02-21:09:24.817 7bc8 Recovering log #3
+2026/04/02-21:09:24.818 7bc8 Reusing old log C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_zhuanlan.zhihu.com_0.indexeddb.leveldb/000003.log 
+2026/04/02-21:36:56.586 7bc8 Level-0 table #5: started
+2026/04/02-21:36:56.590 7bc8 Level-0 table #5: 83053 bytes OK
+2026/04/02-21:36:56.593 7bc8 Delete type=0 #3
+2026/04/02-21:36:56.594 7bc8 Manual compaction at level-0 from (begin) .. (end); will stop at (end)

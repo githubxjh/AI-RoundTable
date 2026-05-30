@@ -1,0 +1,54 @@
+2026/05/30-10:26:58.174 9354 Reusing MANIFEST C:\Users\xiepro\Desktop\AI-RoundTable\tools\browser-profile\chrome-user-data-advanced\Default\shared_proto_db/MANIFEST-000001
+2026/05/30-10:26:58.176 9354 Recovering log #233
+2026/05/30-10:26:58.176 9354 Reusing old log C:\Users\xiepro\Desktop\AI-RoundTable\tools\browser-profile\chrome-user-data-advanced\Default\shared_proto_db/000233.log 
+2026/05/30-10:27:21.189 4b48 Level-0 table #238: started
+2026/05/30-10:27:21.205 4b48 Level-0 table #238: 1835931 bytes OK
+2026/05/30-10:27:21.207 4b48 Delete type=0 #233
+2026/05/30-10:27:21.574 4b48 Level-0 table #240: started
+2026/05/30-10:27:21.601 4b48 Level-0 table #240: 1828036 bytes OK
+2026/05/30-10:27:21.603 4b48 Delete type=0 #237
+2026/05/30-10:27:28.228 9434 Level-0 table #242: started
+2026/05/30-10:27:28.237 9434 Level-0 table #242: 1833012 bytes OK
+2026/05/30-10:27:28.239 9434 Delete type=0 #239
+2026/05/30-10:28:05.735 4b48 Level-0 table #244: started
+2026/05/30-10:28:05.746 5f04 Current memtable full; waiting...
+2026/05/30-10:28:05.754 4b48 Level-0 table #244: 1833819 bytes OK
+2026/05/30-10:28:05.757 4b48 Delete type=0 #241
+2026/05/30-10:28:05.759 9434 Level-0 table #246: started
+2026/05/30-10:28:05.773 9434 Level-0 table #246: 1833012 bytes OK
+2026/05/30-10:28:05.777 9434 Delete type=0 #243
+2026/05/30-10:28:05.778 9434 Compacting 5@0 + 1@1 files
+2026/05/30-10:28:05.818 9434 Generated table #247@0: 1034 keys, 1870548 bytes
+2026/05/30-10:28:05.818 9434 Compacted 5@0 + 1@1 files => 1870548 bytes
+2026/05/30-10:28:05.819 9434 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/05/30-10:28:05.820 9434 Delete type=2 #235
+2026/05/30-10:28:05.820 9434 Delete type=2 #238
+2026/05/30-10:28:05.820 9434 Delete type=2 #240
+2026/05/30-10:28:05.820 9434 Delete type=2 #242
+2026/05/30-10:28:05.820 9434 Delete type=2 #244
+2026/05/30-10:28:05.820 9434 Delete type=2 #246
+2026/05/30-10:38:17.769 4b48 Level-0 table #249: started
+2026/05/30-10:38:17.784 4b48 Level-0 table #249: 1847869 bytes OK
+2026/05/30-10:38:17.786 4b48 Delete type=0 #245
+2026/05/30-10:38:17.940 4b48 Level-0 table #251: started
+2026/05/30-10:38:17.957 4b48 Level-0 table #251: 1833011 bytes OK
+2026/05/30-10:38:17.960 4b48 Delete type=0 #248
+2026/05/30-10:38:35.456 9354 Level-0 table #253: started
+2026/05/30-10:38:35.474 9354 Level-0 table #253: 1833012 bytes OK
+2026/05/30-10:38:35.476 9354 Delete type=0 #250
+2026/05/30-10:39:02.180 4b48 Level-0 table #255: started
+2026/05/30-10:39:02.187 5f04 Current memtable full; waiting...
+2026/05/30-10:39:02.193 4b48 Level-0 table #255: 1833012 bytes OK
+2026/05/30-10:39:02.196 4b48 Delete type=0 #252
+2026/05/30-10:39:02.197 4b48 Compacting 4@0 + 1@1 files
+2026/05/30-10:39:02.208 4b48 Level-0 table #257: started
+2026/05/30-10:39:02.224 4b48 Level-0 table #257: 1833012 bytes OK
+2026/05/30-10:39:02.226 4b48 Delete type=0 #254
+2026/05/30-10:39:02.241 4b48 Generated table #258@0: 1035 keys, 1860952 bytes
+2026/05/30-10:39:02.241 4b48 Compacted 4@0 + 1@1 files => 1860952 bytes
+2026/05/30-10:39:02.242 4b48 compacted to: files[ 1 1 1 0 0 0 0 ]
+2026/05/30-10:39:02.243 4b48 Delete type=2 #247
+2026/05/30-10:39:02.243 4b48 Delete type=2 #249
+2026/05/30-10:39:02.243 4b48 Delete type=2 #251
+2026/05/30-10:39:02.243 4b48 Delete type=2 #253
+2026/05/30-10:39:02.243 4b48 Delete type=2 #255

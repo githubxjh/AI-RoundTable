@@ -1,0 +1,13 @@
+2026/03/14-20:02:42.230 9698 Reusing MANIFEST C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_www.figma.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/03/14-20:02:42.231 9698 Recovering log #7
+2026/03/14-20:02:42.232 9698 Reusing old log C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_www.figma.com_0.indexeddb.leveldb/000007.log 
+2026/03/14-20:02:45.474 96e8 Level-0 table #11: started
+2026/03/14-20:02:45.478 96e8 Level-0 table #11: 1199 bytes OK
+2026/03/14-20:02:45.480 96e8 Delete type=0 #7
+2026/03/14-20:02:45.481 9698 Manual compaction at level-0 from '\x00\x06\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x07\x00\x00\x00' @ 0 : 0; will stop at '\x00\x06\x00\x00\x05' @ 354 : 1
+2026/03/14-20:02:45.481 9698 Compacting 1@0 + 1@1 files
+2026/03/14-20:02:45.483 9698 Generated table #12@0: 46 keys, 1279 bytes
+2026/03/14-20:02:45.483 9698 Compacted 1@0 + 1@1 files => 1279 bytes
+2026/03/14-20:02:45.485 9698 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/03/14-20:02:45.486 9698 Delete type=2 #11
+2026/03/14-20:02:45.486 9698 Manual compaction at level-0 from '\x00\x06\x00\x00\x05' @ 354 : 1 .. '\x00\x07\x00\x00\x00' @ 0 : 0; will stop at (end)
