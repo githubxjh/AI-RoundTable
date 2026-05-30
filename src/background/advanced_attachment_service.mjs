@@ -2,6 +2,7 @@ export const ADVANCED_TEMP_ROOT = 'AI-RoundTable-temp';
 
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 30000;
 const DEFAULT_CLEANUP_DELAY_MS = 30000;
+const DEFAULT_NETWORK_SETTLE_MS = 1000;
 const CDP_PROTOCOL_VERSION = '1.3';
 
 export function sanitizeDownloadName(name) {
@@ -84,36 +85,57 @@ export async function setFileInputFilesWithCdp(tabId, selector, filePaths, optio
     validateAdvancedAttachmentFilePaths(files, options);
 
     return withDebuggerSession(tabId, chromeApi, async () => {
-        const { root } = await sendDebuggerCommand(chromeApi, tabId, 'DOM.getDocument', {
-            depth: -1,
-            pierce: true
+        const networkDiagnostics = createCdpNetworkDiagnostics(chromeApi, tabId, {
+            maxEvents: options.networkMaxEvents
         });
-        const query = await sendDebuggerCommand(chromeApi, tabId, 'DOM.querySelector', {
-            nodeId: root.nodeId,
-            selector: inputSelector
-        });
-        const nodeId = Number(query?.nodeId || 0);
-        if (!nodeId) {
-            throw new Error(`CDP file input not found for selector: ${inputSelector}`);
-        }
-        await sendDebuggerCommand(chromeApi, tabId, 'DOM.setFileInputFiles', {
-            nodeId,
-            files
-        });
-        const { object } = await sendDebuggerCommand(chromeApi, tabId, 'DOM.resolveNode', {
-            nodeId
-        });
-        if (object?.objectId) {
-            await sendDebuggerCommand(chromeApi, tabId, 'Runtime.callFunctionOn', {
-                objectId: object.objectId,
-                functionDeclaration: `function() {
-                    this.dispatchEvent(new Event('input', { bubbles: true }));
-                    this.dispatchEvent(new Event('change', { bubbles: true }));
-                }`,
-                awaitPromise: true
+        let networkStopped = false;
+        const stopNetworkDiagnostics = async () => {
+            if (networkStopped) return networkDiagnostics.snapshot();
+            networkStopped = true;
+            await networkDiagnostics.stop();
+            return networkDiagnostics.snapshot();
+        };
+
+        await networkDiagnostics.start();
+        try {
+            const { root } = await sendDebuggerCommand(chromeApi, tabId, 'DOM.getDocument', {
+                depth: -1,
+                pierce: true
             });
+            const query = await sendDebuggerCommand(chromeApi, tabId, 'DOM.querySelector', {
+                nodeId: root.nodeId,
+                selector: inputSelector
+            });
+            const nodeId = Number(query?.nodeId || 0);
+            if (!nodeId) {
+                throw new Error(`CDP file input not found for selector: ${inputSelector}`);
+            }
+            await sendDebuggerCommand(chromeApi, tabId, 'DOM.setFileInputFiles', {
+                nodeId,
+                files
+            });
+            const { object } = await sendDebuggerCommand(chromeApi, tabId, 'DOM.resolveNode', {
+                nodeId
+            });
+            if (object?.objectId) {
+                await sendDebuggerCommand(chromeApi, tabId, 'Runtime.callFunctionOn', {
+                    objectId: object.objectId,
+                    functionDeclaration: `function() {
+                        this.dispatchEvent(new Event('input', { bubbles: true }));
+                        this.dispatchEvent(new Event('change', { bubbles: true }));
+                    }`,
+                    awaitPromise: true
+                });
+            }
+            await delay(getNetworkSettleMs(options));
+            const network = await stopNetworkDiagnostics();
+            return { nodeId, fileCount: files.length, networkDiagnostics: network };
+        } catch (error) {
+            error.networkDiagnostics = await stopNetworkDiagnostics();
+            throw error;
+        } finally {
+            await stopNetworkDiagnostics();
         }
-        return { nodeId, fileCount: files.length };
     });
 }
 
@@ -144,9 +166,20 @@ export async function setFileInputFilesViaCdpFileChooser(tabId, filePaths, optio
 
     return withDebuggerSession(tabId, chromeApi, async () => {
         let removeFileChooserListener = () => {};
+        const networkDiagnostics = createCdpNetworkDiagnostics(chromeApi, tabId, {
+            maxEvents: options.networkMaxEvents
+        });
+        let networkStopped = false;
+        const stopNetworkDiagnostics = async () => {
+            if (networkStopped) return networkDiagnostics.snapshot();
+            networkStopped = true;
+            await networkDiagnostics.stop();
+            return networkDiagnostics.snapshot();
+        };
         try {
             await sendDebuggerCommand(chromeApi, tabId, 'Page.enable');
             await sendDebuggerCommand(chromeApi, tabId, 'DOM.enable');
+            await networkDiagnostics.start();
 
             const chooserPromise = waitForFileChooserOpened(chromeApi, tabId, { timeoutMs });
             removeFileChooserListener = chooserPromise.removeListener || removeFileChooserListener;
@@ -179,14 +212,21 @@ export async function setFileInputFilesViaCdpFileChooser(tabId, filePaths, optio
                 files
             });
             await dispatchFileInputEventsForBackendNode(chromeApi, tabId, backendNodeId);
+            await delay(getNetworkSettleMs(options));
+            const network = await stopNetworkDiagnostics();
             return {
                 backendNodeId,
                 fileCount: files.length,
                 mode: chooser?.mode || '',
-                trigger: triggerResult?.result?.value || null
+                trigger: triggerResult?.result?.value || null,
+                networkDiagnostics: network
             };
+        } catch (error) {
+            error.networkDiagnostics = await stopNetworkDiagnostics();
+            throw error;
         } finally {
             removeFileChooserListener();
+            await stopNetworkDiagnostics();
             await sendDebuggerCommand(chromeApi, tabId, 'Page.setInterceptFileChooserDialog', {
                 enabled: false
             }).catch((error) => {
@@ -194,6 +234,139 @@ export async function setFileInputFilesViaCdpFileChooser(tabId, filePaths, optio
             });
         }
     });
+}
+
+export function createCdpNetworkDiagnostics(chromeApi = chrome, tabId, options = {}) {
+    const maxEvents = Number.isFinite(options.maxEvents) ? Math.max(1, options.maxEvents) : 80;
+    const targetTabId = Number(tabId);
+    const events = [];
+    let listener = null;
+    let status = 'not_started';
+    let reason = '';
+
+    const append = (event) => {
+        if (events.length >= maxEvents) return;
+        events.push(event);
+    };
+
+    const handleEvent = (source, method, params = {}) => {
+        if (Number(source?.tabId) !== targetTabId) return;
+        if (method === 'Network.requestWillBeSent') {
+            const urlParts = sanitizeNetworkUrl(params?.request?.url);
+            append({
+                event: 'requestWillBeSent',
+                requestId: String(params?.requestId || ''),
+                method: String(params?.request?.method || ''),
+                host: urlParts.host,
+                path: urlParts.path,
+                resourceType: String(params?.type || ''),
+                timestamp: normalizeTimestamp(params?.timestamp)
+            });
+            return;
+        }
+        if (method === 'Network.responseReceived') {
+            const urlParts = sanitizeNetworkUrl(params?.response?.url);
+            append({
+                event: 'responseReceived',
+                requestId: String(params?.requestId || ''),
+                host: urlParts.host,
+                path: urlParts.path,
+                resourceType: String(params?.type || ''),
+                status: Number(params?.response?.status || 0),
+                mimeType: String(params?.response?.mimeType || ''),
+                timestamp: normalizeTimestamp(params?.timestamp)
+            });
+            return;
+        }
+        if (method === 'Network.loadingFinished') {
+            append({
+                event: 'loadingFinished',
+                requestId: String(params?.requestId || ''),
+                timestamp: normalizeTimestamp(params?.timestamp)
+            });
+            return;
+        }
+        if (method === 'Network.loadingFailed') {
+            append({
+                event: 'loadingFailed',
+                requestId: String(params?.requestId || ''),
+                failedReason: String(params?.errorText || ''),
+                timestamp: normalizeTimestamp(params?.timestamp)
+            });
+        }
+    };
+
+    return {
+        async start() {
+            if (!Number.isInteger(targetTabId) || targetTabId < 0) {
+                status = 'unavailable';
+                reason = 'A valid tabId is required for CDP network diagnostics';
+                return;
+            }
+            const onEvent = chromeApi?.debugger?.onEvent;
+            if (!onEvent || typeof onEvent.addListener !== 'function') {
+                status = 'unavailable';
+                reason = 'Chrome debugger network events are unavailable';
+                return;
+            }
+            listener = handleEvent;
+            onEvent.addListener(listener);
+            try {
+                await sendDebuggerCommand(chromeApi, targetTabId, 'Network.enable');
+                status = 'ok';
+                reason = '';
+            } catch (error) {
+                status = 'unavailable';
+                reason = error?.message || 'Network.enable failed';
+            }
+        },
+        async stop() {
+            if (listener) {
+                const removeListener = chromeApi?.debugger?.onEvent?.removeListener;
+                if (typeof removeListener === 'function') {
+                    removeListener.call(chromeApi.debugger.onEvent, listener);
+                }
+                listener = null;
+            }
+            if (status === 'ok') {
+                await sendDebuggerCommand(chromeApi, targetTabId, 'Network.disable').catch((error) => {
+                    status = 'stopped_with_error';
+                    reason = error?.message || 'Network.disable failed';
+                });
+            }
+            if (status === 'not_started') status = 'stopped';
+        },
+        snapshot() {
+            return {
+                status,
+                eventCount: events.length,
+                events: events.map((event) => ({ ...event })),
+                ...(reason ? { reason } : {})
+            };
+        }
+    };
+}
+
+function getNetworkSettleMs(options = {}) {
+    if (!Number.isFinite(options.networkSettleMs)) return DEFAULT_NETWORK_SETTLE_MS;
+    return Math.max(0, options.networkSettleMs);
+}
+
+function sanitizeNetworkUrl(value) {
+    try {
+        const parsed = new URL(String(value || ''));
+        return {
+            host: parsed.host,
+            path: parsed.pathname || '/'
+        };
+    } catch {
+        return { host: '', path: '' };
+    }
+}
+
+function normalizeTimestamp(value) {
+    const timestamp = Number(value);
+    return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function formatRuntimeEvaluationError(exceptionDetails = {}) {

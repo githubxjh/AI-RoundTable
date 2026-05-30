@@ -148,6 +148,13 @@ runTest('background routes prepared Gemini file chooser uploads through the CDP 
     assert.match(serviceWorkerSource, /inputMode: response\.inputMode \|\| 'file_input'/);
 });
 
+runTest('background strictly blocks attachment downgrades instead of sending text fallback', () => {
+    assert.doesNotMatch(serviceWorkerSource, /sendTextFallbackForAttachmentIssue/);
+    assert.doesNotMatch(serviceWorkerSource, /phase:\s*'text_fallback'/);
+    assert.match(serviceWorkerSource, /phase:\s*'attachment_blocked'/);
+    assert.match(serviceWorkerSource, /phase:\s*'cdp_advanced_failed'/);
+});
+
 let passed = 0;
 
 for (const { name, fn } of tests) {

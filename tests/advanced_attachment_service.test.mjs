@@ -5,6 +5,7 @@ import {
     buildAdvancedDownloadFilename,
     buildAttachmentDataUrl,
     createDeferredDownloadCleanup,
+    createCdpNetworkDiagnostics,
     inferDownloadRootFromStagedFile,
     setFileInputFilesWithCdp,
     setFileInputFilesViaCdpFileChooser,
@@ -109,7 +110,9 @@ runTest('cdp file injection dispatches input and change after setting files', as
         chromeApi
     );
 
-    assert.deepEqual(result, { nodeId: 7, fileCount: 1 });
+    assert.equal(result.nodeId, 7);
+    assert.equal(result.fileCount, 1);
+    assert.equal(result.networkDiagnostics.status, 'unavailable');
     assert.equal(calls.some(([method]) => method === 'DOM.setFileInputFiles'), true);
     const runtimeCall = calls.find(([method]) => method === 'Runtime.callFunctionOn');
     assert.ok(runtimeCall, 'Runtime.callFunctionOn should dispatch DOM events');
@@ -188,6 +191,82 @@ runTest('cdp file chooser injection sets files through the opened input backend 
     });
     assert.equal(calls.some(([method]) => method === 'Runtime.callFunctionOn'), true);
     assert.equal(calls.some(([method]) => method === 'onEvent.removeListener'), true);
+});
+
+runTest('cdp network diagnostics records only sanitized request metadata', async () => {
+    const listeners = new Set();
+    const calls = [];
+    const chromeApi = {
+        debugger: {
+            onEvent: {
+                addListener(listener) {
+                    listeners.add(listener);
+                },
+                removeListener(listener) {
+                    listeners.delete(listener);
+                }
+            },
+            sendCommand(_target, method, _params, callback) {
+                calls.push(method);
+                callback?.({});
+            }
+        },
+        runtime: {}
+    };
+
+    const diagnostics = createCdpNetworkDiagnostics(chromeApi, 42, { maxEvents: 10 });
+    await diagnostics.start();
+    for (const listener of listeners) {
+        listener({ tabId: 42 }, 'Network.requestWillBeSent', {
+            requestId: 'upload-1',
+            type: 'Fetch',
+            timestamp: 101,
+            request: {
+                method: 'POST',
+                url: 'https://gemini.google.com/_/upload?token=secret',
+                headers: { cookie: 'SID=secret' },
+                postData: 'file-body'
+            }
+        });
+        listener({ tabId: 42 }, 'Network.responseReceived', {
+            requestId: 'upload-1',
+            type: 'Fetch',
+            timestamp: 102,
+            response: {
+                url: 'https://gemini.google.com/_/upload?token=secret',
+                status: 200,
+                mimeType: 'application/json',
+                headers: { 'set-cookie': 'SID=secret' }
+            }
+        });
+        listener({ tabId: 41 }, 'Network.loadingFailed', {
+            requestId: 'other-tab',
+            timestamp: 103,
+            errorText: 'ignored'
+        });
+    }
+    await diagnostics.stop();
+
+    const snapshot = diagnostics.snapshot();
+    assert.equal(calls.includes('Network.enable'), true);
+    assert.equal(calls.includes('Network.disable'), true);
+    assert.equal(snapshot.events.length, 2);
+    assert.deepEqual(snapshot.events[0], {
+        event: 'requestWillBeSent',
+        requestId: 'upload-1',
+        method: 'POST',
+        host: 'gemini.google.com',
+        path: '/_/upload',
+        resourceType: 'Fetch',
+        timestamp: 101
+    });
+    assert.equal(snapshot.events[1].status, 200);
+    assert.equal(snapshot.events[1].mimeType, 'application/json');
+
+    const serialized = JSON.stringify(snapshot);
+    assert.equal(serialized.includes('secret'), false);
+    assert.equal(serialized.includes('cookie'), false);
+    assert.equal(serialized.includes('file-body'), false);
 });
 
 runTest('cdp injection rejects staged paths outside the advanced temp root', async () => {

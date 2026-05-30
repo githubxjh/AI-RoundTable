@@ -2,16 +2,17 @@
 
 ## TL;DR
 
-Gemini single-model/single-file Advanced attachment upload is now live-proven. Do not generalize this to ChatGPT, Grok, Doubao, or DeepSeek yet. The proven Gemini path uses CDP file chooser interception, not a persistent `input[type="file"]`. Daily Chrome remains unproven because that browser is not CDP-controllable; use the in-panel Gemini attachment diagnostics if the user's daily Chrome still disagrees with the 9333 proof.
+Gemini single-model/single-file Advanced attachment upload is live-proven on the dedicated 9333 Advanced line, but the current task is changing attachment broadcast semantics: attachment sends now default to strict blocking, so an unconfirmed attachment must not be silently resent as pure text. Do not generalize Gemini proof to ChatGPT, Grok, Doubao, or DeepSeek yet. The proven Gemini path uses CDP file chooser interception, not a persistent `input[type="file"]`. Daily Chrome remains unproven because that browser is not CDP-controllable; use the in-panel Gemini attachment diagnostics if the user's daily Chrome still disagrees with the 9333 proof.
 
 ## Current Stop Line
 
-Latest user direction: continue fixing the attachment issue, research the method first, and keep git staging ready for frequent iteration.
+Latest user direction: implement the approved strict attachment blocking and Gemini/CDP diagnostics plan, then stage and commit a verified rollback anchor.
 
 ## Debugging Packet
 
-- Symptom: attachment group broadcast could send fallback text but did not prove file upload.
+- Symptom: attachment group broadcast could send fallback text without proving file upload.
 - Success criteria: `attachmentResults[]` must contain `attachmentStatus=supported`, `method=cdp_advanced`, and `code=attachment_cdp_uploaded`.
+- Strict blocking rule: if an attachment is not confirmed, record blocked/failed/manual status and do not send the prompt as pure text. Pure-text fallback is not available unless a future explicit user option is designed.
 - Browser line: Advanced local only, CDP `9333`, profile `tools/browser-profile/chrome-user-data-advanced`, package `output/advanced-release/AI-RoundTable-advanced`.
 - Minimal repro used: Gemini only, one tiny PNG fixture, one normal prompt.
 - Root cause: Gemini currently opens a native file chooser from its upload menu and does not leave a stable `input[type="file"]` in the DOM for `DOM.querySelector`.
@@ -82,6 +83,10 @@ Fresh verification from this continuation:
 - After adding active diagnostics and structured CDP trigger/readiness detail, `node tests\gemini_attachment_diagnostics.test.mjs`, `node tests\adapter_preuploaded_attachment.test.mjs`, `node tests\advanced_attachment_service.test.mjs`, `node tests\gemini_adapter.test.mjs`, `node tests\attachment_live_script.test.mjs`, and `cmd /c npm.cmd run test:helpers` passed.
 - `cmd /c npm.cmd run release:advanced` rebuilt the Advanced package with the new diagnostics.
 - `node scripts\test_attachment.mjs Gemini --file "C:\Users\xiepro\Desktop\附件5.pdf"` passed on Advanced CDP `9333`; latest `attachmentResults[0]` was `supported / cdp_advanced / attachment_cdp_uploaded`; timestamp in log: `2026-05-30T02:38:32.122Z`. The response now includes `cdpUpload.trigger.target.text="上传文件"` and visible `previewCandidates`, which is the key evidence if daily Chrome disagrees.
+- After strict attachment blocking and sanitized CDP Network diagnostics, `node tests\advanced_attachment_service.test.mjs`, `node tests\adapter_preuploaded_attachment.test.mjs`, `node tests\gemini_attachment_diagnostics.test.mjs`, `node tests\attachment_live_script.test.mjs`, and `cmd /c npm.cmd run test:helpers` passed.
+- `cmd /c npm.cmd run release:advanced` rebuilt the Advanced package after strict blocking.
+- `cmd /c npm.cmd run test:chrome:launch:advanced` completed on the dedicated Advanced line.
+- `node scripts\test_attachment.mjs Gemini --file "C:\Users\xiepro\Desktop\附件5.pdf"` passed on Advanced CDP `9333` after the final rebuild/reload; latest `attachmentResults[0]` was `supported / cdp_advanced / attachment_cdp_uploaded`; timestamp in log: `2026-05-30T12:44:18.730Z`. The result includes `cdpUpload.networkDiagnostics.status="ok"` with sanitized host/path/method/status metadata and no query, headers, body, or file content.
 
 External method check used:
 
@@ -105,11 +110,11 @@ Cheap Council:
 1. If the user tests in daily Chrome, ask them to reload the unpacked extension in `chrome://extensions`, refresh/open a fresh `https://gemini.google.com/app` tab, keep it active, and test Gemini only.
 2. If daily Chrome still fails, use the side-panel `诊断 Gemini 附件` button and inspect the copied JSON before changing selectors again.
 3. If expanding beyond Gemini, follow the matrix in `docs/debugging-convergence.md`: single model, single file first; then dual model; then five-model matrix.
-4. Do not run `node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek` as proof until each non-Gemini model has a documented capability path or expected manual fallback.
+4. Do not run `node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek` as proof until each non-Gemini model has a documented capability path or expected manual block.
 
 ## Do Not Do
 
-- Do not claim attachment success from fallback text.
+- Do not claim attachment success from fallback text. For current strict behavior, fallback text should not be sent automatically on attachment failure.
 - Do not enable Advanced CDP capabilities for other models without model-specific live evidence.
 - Do not use or kill the `9222` Danaher Chrome.
 - The user has clarified this repo should use commits as rollback anchors after verified iteration checkpoints; do not stop at staged-only when the scope is clear and tests have passed. Still do not pull, push, or run destructive rollback/history-editing commands without explicit confirmation.

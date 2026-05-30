@@ -14,6 +14,7 @@
 - 不在 Lite/public 和 Advanced/local 两条线之间互相证明。
 - 不在没有正确 profile、端口、扩展包的情况下跑 live 结论。
 - 不为了追进度同时改多个假设点。
+- 带附件发送默认严格阻断：附件未确认上传时，不自动改发纯文本。纯文本降级只能作为未来显式用户选项重新设计。
 
 ## 收敛闸门
 
@@ -34,7 +35,7 @@
 
 1. 能力判断层：`attachment_capabilities` 和 `attachmentResults[]` 状态是否符合预期。
 2. Advanced 包层：刚运行过 `release:advanced`，并确认 9333、`chrome-user-data-advanced`、`output/advanced-release/AI-RoundTable-advanced` 一致。
-3. 单模型附件层：只测一个模型、一个小文件、一个输入，证明 `attachment_cdp_uploaded` 或明确降级原因。
+3. 单模型附件层：只测一个模型、一个小文件、一个输入，证明 `attachment_cdp_uploaded` 或明确阻断原因。
 4. 双模型群发层：一个已证明可上传的模型，加一个目标模型，确认群发编排没有吞掉附件状态。
 5. 五模型矩阵层：只有前四层都清楚时，才跑 ChatGPT、Gemini、Grok、Doubao、DeepSeek 全量。
 
@@ -93,5 +94,5 @@
 - 有明确的最小复现和最终验证命令。
 - 有 `output/playwright/` 下的证据路径。
 - 附件成功字段满足 `attachmentStatus=supported`、`method=cdp_advanced`、`code=attachment_cdp_uploaded`。
-- 如果是降级或手动上传，最终报告明确说是降级，不写成成功。
+- 如果是阻断或手动上传，最终报告明确说是阻断/手动，不写成成功，也不写成已纯文本发送。
 - `.claude/HANDOFF.md` 写清已证明和未证明事项。

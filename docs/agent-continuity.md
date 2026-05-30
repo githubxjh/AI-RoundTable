@@ -85,7 +85,7 @@ Before live tests, verify with `chrome://version` through the repository scripts
 
 ## Attachment Success Rule
 
-Text fallback is not attachment success. A broadcast with attachments is only proven to have uploaded the attachment when the relevant `attachmentResults[]` record has:
+Text fallback is not attachment success. Attachment broadcasts default to strict blocking: if the attachment is not confirmed, the prompt text must not be sent automatically. A broadcast with attachments is only proven to have uploaded the attachment when the relevant `attachmentResults[]` record has:
 
 ```text
 attachmentStatus = supported
@@ -93,7 +93,7 @@ method = cdp_advanced
 code = attachment_cdp_uploaded
 ```
 
-Anything else, including `manual_required`, `text_fallback`, `attachment_upload_failed`, or a normal model reply, must be reported as degraded or unproven.
+Anything else, including `manual_required`, `text_fallback`, `attachment_upload_failed`, or a normal model reply, must be reported as blocked, manual-required, failed, or unproven. Pure-text fallback is allowed only if a future explicit user option is designed and documented.
 
 ## Evidence Rule
 

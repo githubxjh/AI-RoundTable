@@ -244,13 +244,15 @@ code = attachment_cdp_uploaded
 - `attachment_upload_failed`
 - 模型回复了文字但没有上述附件结果字段
 
+带附件发送默认严格阻断：附件未确认上传时，扩展不再自动改发纯文本。测试报告里如果看到 `manual_required`、`unsupported`、`attachment_cdp_failed` 或 `attachment_upload_failed`，应按阻断/失败处理。
+
 ### 附件群发怎么缩小范围
 
 附件群发按层级验证，不要直接跑全量矩阵：
 
 1. 能力判断层：helper 测试和 `attachmentResults[]` 状态正常。
 2. Advanced 包层：刚运行 `release:advanced`，并确认 9333、Advanced profile、Advanced unpacked 包一致。
-3. 单模型附件层：一个模型、一个小文件、一个输入，证明上传或明确降级原因。
+3. 单模型附件层：一个模型、一个小文件、一个输入，证明上传或明确阻断原因。
 4. 双模型群发层：确认群发编排没有吞掉附件状态。
 5. 五模型矩阵层：最后再跑 ChatGPT、Gemini、Grok、Doubao、DeepSeek。
 

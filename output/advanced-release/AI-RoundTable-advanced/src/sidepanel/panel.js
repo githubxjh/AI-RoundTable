@@ -64,7 +64,7 @@ function getModelDisabledMessage(model) {
 
 const BROADCAST_MAX_FILES = ATTACHMENT_LIMITS.maxFiles;
 const BROADCAST_MAX_FILE_BYTES = ATTACHMENT_LIMITS.maxBytes;
-const BROADCAST_DROP_HINT_FALLBACK = '附件上传测试中：可以粘贴或拖拽文件，最多 3 个、每个不超过 5MB。部分模型可能无法带附件发送，系统会尝试降级为纯文本；重要内容建议直接粘贴到问题里。';
+const BROADCAST_DROP_HINT_FALLBACK = '附件上传测试中：可以粘贴或拖拽文件，最多 3 个、每个不超过 5MB。带附件发送默认严格阻断：附件未确认上传时不会改发纯文本。';
 
 const REVIEW_MODES = {
     scoring: 'scoring',
@@ -771,7 +771,7 @@ async function onBroadcast() {
             const confirmed = await showConfirm(
                 t(
                     'attachmentManualConfirm',
-                    '当前所选模型里有 {0} 仍需要手动上传附件。继续后这些模型会按纯文本发送，请在目标网页手动上传附件。',
+                    '当前所选模型里有 {0} 仍需要手动上传附件。继续后这些模型会被阻断，不会改发纯文本；请在目标网页手动上传后再发送。',
                     [manualModels]
                 ),
                 {
@@ -814,7 +814,7 @@ async function onBroadcast() {
         t('broadcastOutcomeSent', '已发送 {0} 个模型。', [sentModels.length])
     ];
     if (degraded.length > 0) {
-        lines.push(t('broadcastOutcomeDegraded', '{0} 个模型已降级为纯文本发送（{1}）。', [
+        lines.push(t('broadcastOutcomeDegraded', '{0} 个模型附件未确认，未自动发送（{1}）。', [
             degraded.length,
             summarizeBroadcastIssues(degraded)
         ]));
@@ -876,24 +876,24 @@ function localizeBroadcastIssueReason(item) {
     }
     if (code === 'attachment_input_not_found') {
         if (lowerReason.includes('deepseek') || lowerReason.includes('native user gesture')) {
-            return t('attachmentDeepSeekManualRequiredSummary', 'DeepSeek 需要手动选择附件，当前自动发送无法代传附件，已改为纯文本。');
+            return t('attachmentDeepSeekManualRequiredSummary', 'DeepSeek 需要手动选择附件，当前自动发送无法代传附件，文本未发送。');
         }
-        return t('attachmentInputMissingSummary', '没有找到可用的附件入口，已改为纯文本。');
+        return t('attachmentInputMissingSummary', '没有找到可用的附件入口，文本未发送。');
     }
     if (code === 'attachment_upload_failed') {
-        return t('attachmentUploadFailedSummary', '附件上传未完成，已尝试改为纯文本。');
+        return t('attachmentUploadFailedSummary', '附件上传未完成，文本未发送。');
     }
     if (code === 'attachment_manual_required' || attachmentStatus === 'manual_required') {
-        return t('attachmentManualRequiredSummary', '该模型在 Lite 版需要手动上传附件，已改为纯文本发送。');
-    }
-    if (code === 'attachment_cdp_uploaded' || method === 'cdp_advanced') {
-        return t('attachmentCdpUploadedSummary', '附件已通过 Advanced 本地版上传。');
+        return t('attachmentManualRequiredSummary', '该模型需要手动上传附件，已阻断自动发送。');
     }
     if (code === 'attachment_cdp_failed') {
-        return t('attachmentCdpFailedSummary', 'Advanced 本地版附件注入失败，已回退。');
+        return t('attachmentCdpFailedSummary', 'Advanced 本地版附件注入未确认，文本未发送；请复制诊断 JSON。');
+    }
+    if (code === 'attachment_cdp_uploaded') {
+        return t('attachmentCdpUploadedSummary', '附件已通过 Advanced 本地版上传。');
     }
     if (attachmentStatus === 'text_fallback') {
-        return t('attachmentTextFallbackSummary', '附件已改为纯文本发送。');
+        return t('attachmentTextFallbackSummary', '附件未确认上传，文本未发送。');
     }
     if (code === 'send_failed') {
         return t('broadcastSendFailedSummary', '发送失败。');

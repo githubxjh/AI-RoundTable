@@ -462,45 +462,37 @@ async function broadcastMessage(text, targets, attachments = [], options = {}) {
                 : getAttachmentCapability(model, [], { advanced: useAdvancedAttachments });
 
             if (hasAttachments && capability.status === ATTACHMENT_STATUS.manualRequired) {
-                const record = buildAttachmentRecord(model, {
-                    status: ATTACHMENT_STATUS.textFallback,
-                    method: ATTACHMENT_METHODS.textFallback,
-                    code: capability.code,
-                    reason: capability.reason
-                });
-                const fallbackHandled = await sendTextFallbackForAttachmentIssue({
-                    tabId,
+                recordStrictAttachmentIssue({
                     model,
-                    text,
-                    record,
-                    sentModels,
-                    degraded,
+                    status: ATTACHMENT_STATUS.manualRequired,
+                    method: capability.method || ATTACHMENT_METHODS.manual,
+                    code: capability.code,
+                    reason: capability.reason,
+                    bucket: 'skipped',
+                    phase: 'attachment_blocked',
+                    skipped,
                     failed,
-                    results,
-                    attachmentResults
+                    attachmentResults,
+                    results
                 });
-                if (fallbackHandled) continue;
+                continue;
             }
 
             if (hasAttachments && capability.status === ATTACHMENT_STATUS.unsupported) {
-                const record = buildAttachmentRecord(model, {
-                    status: ATTACHMENT_STATUS.textFallback,
-                    method: ATTACHMENT_METHODS.textFallback,
-                    code: capability.code,
-                    reason: capability.reason
-                });
-                const fallbackHandled = await sendTextFallbackForAttachmentIssue({
-                    tabId,
+                recordStrictAttachmentIssue({
                     model,
-                    text,
-                    record,
-                    sentModels,
-                    degraded,
+                    status: ATTACHMENT_STATUS.unsupported,
+                    method: capability.method || ATTACHMENT_METHODS.none,
+                    code: capability.code,
+                    reason: capability.reason,
+                    bucket: 'skipped',
+                    phase: 'attachment_blocked',
+                    skipped,
                     failed,
-                    results,
-                    attachmentResults
+                    attachmentResults,
+                    results
                 });
-                if (fallbackHandled) continue;
+                continue;
             }
 
             if (hasAttachments && capability.method === ATTACHMENT_METHODS.cdpAdvanced) {
@@ -562,24 +554,26 @@ async function broadcastMessage(text, targets, attachments = [], options = {}) {
                         continue;
                     }
 
-                    const fallbackRecord = buildAttachmentRecord(model, {
-                        status: ATTACHMENT_STATUS.textFallback,
-                        method: ATTACHMENT_METHODS.textFallback,
-                        code: record.code,
-                        reason: record.reason
-                    });
-                    const fallbackHandled = await sendTextFallbackForAttachmentIssue({
-                        tabId,
+                    recordStrictAttachmentIssue({
                         model,
-                        text,
-                        record: fallbackRecord,
-                        sentModels,
-                        degraded,
+                        status: ATTACHMENT_STATUS.failed,
+                        method: ATTACHMENT_METHODS.cdpAdvanced,
+                        code: record.code,
+                        reason: record.reason,
+                        bucket: 'failed',
+                        phase: 'cdp_advanced_failed',
+                        details: {
+                            prepare: summarizeAttachmentPrepareForResult(prepare),
+                            cdpUpload,
+                            verify,
+                            response
+                        },
+                        skipped,
                         failed,
-                        results,
-                        attachmentResults
+                        attachmentResults,
+                        results
                     });
-                    if (fallbackHandled) continue;
+                    continue;
                 } catch (error) {
                     if (advancedStage?.downloadIds?.length > 0) {
                         await advancedCleanup(advancedStage.downloadIds).catch((cleanupError) => {
@@ -599,33 +593,27 @@ async function broadcastMessage(text, targets, attachments = [], options = {}) {
                         results.push({ model, phase: 'cdp_advanced', error: record.reason, ...record });
                         continue;
                     }
-                    const record = buildAttachmentRecord(model, {
-                        status: ATTACHMENT_STATUS.textFallback,
-                        method: ATTACHMENT_METHODS.textFallback,
+                    recordStrictAttachmentIssue({
+                        model,
+                        status: ATTACHMENT_STATUS.failed,
+                        method: ATTACHMENT_METHODS.cdpAdvanced,
                         code: 'attachment_cdp_failed',
-                        reason: error?.message || 'Advanced CDP attachment upload failed'
-                    });
-                    results.push({
-                        model,
+                        reason: error?.message || 'Advanced CDP attachment upload failed',
+                        bucket: 'failed',
                         phase: 'cdp_advanced_failed',
-                        prepare: summarizeAttachmentPrepareForResult(prepare),
-                        cdpUpload,
-                        verify,
-                        error: record.reason,
-                        ...record
-                    });
-                    const fallbackHandled = await sendTextFallbackForAttachmentIssue({
-                        tabId,
-                        model,
-                        text,
-                        record,
-                        sentModels,
-                        degraded,
+                        details: {
+                            prepare: summarizeAttachmentPrepareForResult(prepare),
+                            cdpUpload,
+                            verify,
+                            networkDiagnostics: error?.networkDiagnostics || cdpUpload?.networkDiagnostics || null,
+                            error: error?.message || 'Advanced CDP attachment upload failed'
+                        },
+                        skipped,
                         failed,
-                        results,
-                        attachmentResults
+                        attachmentResults,
+                        results
                     });
-                    if (fallbackHandled) continue;
+                    continue;
                 }
             }
 
@@ -653,24 +641,21 @@ async function broadcastMessage(text, targets, attachments = [], options = {}) {
             }
 
             if (hasAttachments && response?.status === 'skipped_unsupported_attachment') {
-                const record = buildAttachmentRecord(model, {
-                    status: ATTACHMENT_STATUS.textFallback,
-                    method: ATTACHMENT_METHODS.textFallback,
-                    code: String(response?.code || 'attachment_upload_failed'),
-                    reason: String(response?.message || 'Attachment upload is unsupported on this model page')
-                });
-                const fallbackHandled = await sendTextFallbackForAttachmentIssue({
-                    tabId,
+                recordStrictAttachmentIssue({
                     model,
-                    text,
-                    record,
-                    sentModels,
-                    degraded,
+                    status: ATTACHMENT_STATUS.failed,
+                    method,
+                    code: String(response?.code || 'attachment_upload_failed'),
+                    reason: String(response?.message || 'Attachment upload is unsupported on this model page'),
+                    bucket: 'failed',
+                    phase: 'attachment_blocked',
+                    details: { response },
+                    skipped,
                     failed,
-                    results,
-                    attachmentResults
+                    attachmentResults,
+                    results
                 });
-                if (fallbackHandled) continue;
+                continue;
             }
 
             if (response?.status === 'skipped_unsupported_attachment') {
@@ -820,48 +805,34 @@ function buildAttachmentRecord(model, input = {}) {
     };
 }
 
-async function sendTextFallbackForAttachmentIssue({
-    tabId,
+function recordStrictAttachmentIssue({
     model,
-    text,
-    record,
-    sentModels,
-    degraded,
+    status,
+    method,
+    code,
+    reason,
+    bucket = 'failed',
+    phase = 'attachment_blocked',
+    details = {},
+    skipped,
     failed,
-    results,
-    attachmentResults
+    attachmentResults,
+    results
 }) {
-    const fallbackResponse = await sendMessageToTab(tabId, {
-        type: 'INPUT_PROMPT',
-        text,
-        model,
-        mode: 'normal',
-        attachments: []
+    const record = buildAttachmentRecord(model, {
+        status,
+        method,
+        code,
+        reason
     });
-
-    results.push({ model, phase: 'text_fallback', response: fallbackResponse, ...record });
-
-    if (fallbackResponse?.status === 'input_simulated') {
-        sentModels.push(model);
-        degraded.push(record);
-        attachmentResults.push(record);
-        return true;
+    if (bucket === 'skipped') {
+        skipped.push(record);
+    } else {
+        failed.push(record);
     }
-
-    const fallbackFailure = normalizeBroadcastFailure(
-        fallbackResponse,
-        'send_failed',
-        'Text fallback dispatch failed after attachment downgrade'
-    );
-    const failureRecord = buildAttachmentRecord(model, {
-        status: ATTACHMENT_STATUS.failed,
-        method: record.method,
-        code: fallbackFailure.code,
-        reason: fallbackFailure.reason
-    });
-    failed.push(failureRecord);
-    attachmentResults.push(failureRecord);
-    return true;
+    attachmentResults.push(record);
+    results.push({ model, phase, ...details, ...record });
+    return record;
 }
 
 async function prepareAttachmentInputForCdp(tabId, model) {
