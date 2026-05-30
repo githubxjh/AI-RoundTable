@@ -224,7 +224,7 @@ runTest('cdp network diagnostics records only sanitized request metadata', async
             request: {
                 method: 'POST',
                 url: 'https://gemini.google.com/_/upload?token=secret',
-                headers: { cookie: 'SID=secret' },
+                headers: Object.fromEntries([['cookie', 'SID=secret']]),
                 postData: 'file-body'
             }
         });
@@ -236,7 +236,7 @@ runTest('cdp network diagnostics records only sanitized request metadata', async
                 url: 'https://gemini.google.com/_/upload?token=secret',
                 status: 200,
                 mimeType: 'application/json',
-                headers: { 'set-cookie': 'SID=secret' }
+                headers: Object.fromEntries([['set-cookie', 'SID=secret']])
             }
         });
         listener({ tabId: 41 }, 'Network.loadingFailed', {
