@@ -36,6 +36,12 @@ Latest user direction on 2026-05-30: no need to keep changing the Advanced versi
 - Hash check passed for `manifest.json`, `src/content/adapter_gemini.js`, `src/content/adapter_base.js`, `src/background/service_worker.js`, and `src/sidepanel/panel.js` between source and the regenerated Lite package.
 - `node tests\gemini_adapter.test.mjs` passed 6/6.
 - `cmd /c npm.cmd run test:helpers` passed.
+- 2026-05-31 after user reported Gemini succeeded but ChatGPT/Grok/Doubao/DeepSeek showed generic `发送失败。`: likely cause is old tabs created before extension reload missing a fresh content script receiver. `sendMessageToTab()` now retries missing-receiver errors by injecting the model content scripts with `chrome.scripting.executeScript`, then sending once more.
+- Side panel now shows a specific missing-content-script hint instead of only `发送失败。` when the underlying reason is a missing receiver.
+- `node tests\attachment_live_script.test.mjs` passed 13/13 after adding a static guard for the injection retry path.
+- `cmd /c npm.cmd run test:helpers` passed after the retry fix.
+- `cmd /c npm.cmd run release:public` passed after the retry fix; hash check passed for background, side panel, and all five content adapters in `output/public-release/AI-RoundTable-extension-test`.
+- Normal `test:chrome:launch` live reproduction did not run because Chrome was already open; detected 9222 belongs to the Danaher profile and 9333 belongs to the paused Advanced profile. Do not close those without user confirmation.
 
 ## Not Proven
 

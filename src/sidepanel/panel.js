@@ -896,6 +896,12 @@ function localizeBroadcastIssueReason(item) {
         return t('attachmentTextFallbackSummary', '附件未确认上传，文本未发送。');
     }
     if (code === 'send_failed') {
+        if (/receiving end does not exist|could not establish connection|extension context invalidated/i.test(reason)) {
+            return t('broadcastContentScriptMissingSummary', '页面未加载扩展脚本，请刷新该模型页面后重试。');
+        }
+        if (reason) {
+            return t('broadcastSendFailedWithReasonSummary', '发送失败：{0}', [reason]);
+        }
         return t('broadcastSendFailedSummary', '发送失败。');
     }
     if (lowerReason.includes('attachment upload is unsupported')) {

@@ -61,6 +61,13 @@ const IDLE_MAX_WAIT_MS = 12000;
 const MODEL_STATE_IDLE_FALLBACK_MS = 4000;
 const MODEL_STATE_IDLE_FALLBACK_MODELS = new Set(['ChatGPT']);
 const ADVANCED_ATTACHMENT_CLEANUP_DELAY_MS = 30000;
+const CONTENT_SCRIPT_FILES_BY_MODEL = {
+    ChatGPT: ['src/content/adapter_base.js', 'src/content/adapter_gpt.js'],
+    Gemini: ['src/content/adapter_base.js', 'src/content/adapter_gemini.js'],
+    DeepSeek: ['src/content/adapter_base.js', 'src/content/adapter_deepseek.js'],
+    Doubao: ['src/content/adapter_base.js', 'src/content/adapter_doubao.js'],
+    Grok: ['src/content/adapter_base.js', 'src/content/adapter_grok.js']
+};
 
 const DEFAULT_SETTINGS = {
     retentionDays: 30,
@@ -926,9 +933,41 @@ async function sendMessageToTab(tabId, payload) {
     try {
         return await chrome.tabs.sendMessage(tabId, payload);
     } catch (error) {
+        if (shouldRetryAfterMissingReceiver(error)) {
+            try {
+                const injected = await injectContentScriptsForPayload(tabId, payload);
+                if (injected) {
+                    return await chrome.tabs.sendMessage(tabId, payload);
+                }
+            } catch (retryError) {
+                console.warn(`Failed to inject content scripts for tab ${tabId}:`, retryError);
+                return {
+                    error: retryError?.message || error?.message || 'Content script injection failed',
+                    code: 'content_script_injection_failed'
+                };
+            }
+        }
         console.warn(`Failed to send to tab ${tabId}:`, error);
         return { error: error.message };
     }
+}
+
+function shouldRetryAfterMissingReceiver(error) {
+    const message = String(error?.message || error || '');
+    return /receiving end does not exist|could not establish connection/i.test(message);
+}
+
+async function injectContentScriptsForPayload(tabId, payload = {}) {
+    const model = String(payload?.model || '').trim();
+    const files = CONTENT_SCRIPT_FILES_BY_MODEL[model];
+    if (!files || files.length === 0 || !chrome.scripting?.executeScript) {
+        return false;
+    }
+    await chrome.scripting.executeScript({
+        target: { tabId },
+        files
+    });
+    return true;
 }
 
 async function ensureRtState() {

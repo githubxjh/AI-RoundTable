@@ -155,6 +155,13 @@ runTest('background strictly blocks attachment downgrades instead of sending tex
     assert.match(serviceWorkerSource, /phase:\s*'cdp_advanced_failed'/);
 });
 
+runTest('background retries missing content scripts before marking send failed', () => {
+    assert.match(serviceWorkerSource, /CONTENT_SCRIPT_FILES_BY_MODEL/);
+    assert.match(serviceWorkerSource, /shouldRetryAfterMissingReceiver/);
+    assert.match(serviceWorkerSource, /chrome\.scripting\?\.executeScript/);
+    assert.match(serviceWorkerSource, /receiving end does not exist\|could not establish connection/i);
+});
+
 let passed = 0;
 
 for (const { name, fn } of tests) {
