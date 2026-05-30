@@ -2,7 +2,7 @@
 
 ## 概览
 
-这个仓库现在有两条测试链路：
+这个仓库现在以 Lite/public 版本为主要测试链路：
 
 - `test:all`
   先跑 Node helper 测试，再跑 headless smoke。适合日常改动后的快速回归。
@@ -12,8 +12,8 @@
   单独测试 `ChatGPT`。因为更容易遇到验证页，不放进默认 core 集合。
 - `test:live:chromium`
   保留旧的 bundled `chromium` live 链路，适合调试扩展本身，不适合作为 Google 登录主路径。
-- `test:chrome:launch:advanced` + `test_attachment.mjs`
-  本地 Advanced 附件链路，使用独立 profile、Advanced unpacked 包和 `debugger` 权限。
+- Advanced 附件链路
+  已暂停为内部实验资料，不作为日常测试、公开分享或同事试用流程。只有用户明确要求恢复附件实验时，才使用 `test:chrome:launch:advanced` + `test_attachment.mjs`。
 
 `Claude` 目前不在默认 live 范围里。
 
@@ -30,10 +30,10 @@
 
 这样 Google / GPT 登录仍然发生在真实 Chrome 里，但使用的是一个独立的长期复用 profile，不再触发 Chrome 136 对默认 user data dir 的限制。
 
-普通 live 文本验证和 Advanced 附件验证是两条线：
+普通 live 文本验证是当前主线；Advanced 附件验证已暂停为内部实验线：
 
 - 普通文本 live：`tools/browser-profile/chrome-user-data`
-- Advanced 附件 live：`tools/browser-profile/chrome-user-data-advanced`、`output/advanced-release/AI-RoundTable-advanced`、默认端口 `9333`
+- Advanced 附件 live（仅显式恢复实验时使用）：`tools/browser-profile/chrome-user-data-advanced`、`output/advanced-release/AI-RoundTable-advanced`、默认端口 `9333`
 
 不要把 Advanced 附件问题拿普通 root/Lite 扩展证明，也不要把普通文本群发结果当附件上传成功。
 
@@ -113,7 +113,7 @@ cmd /c npm.cmd run test:live -- Gemini Doubao
 cmd /c npm.cmd run test:live:chromium
 ```
 
-Advanced 附件验证命令：
+Advanced 附件验证命令（暂停，仅在明确恢复内部实验时使用）：
 
 ```powershell
 cmd /c npm.cmd run release:advanced
@@ -219,7 +219,7 @@ Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" |
   Select-Object ProcessId, CommandLine
 ```
 
-AI-RoundTable Advanced 附件验证必须连到 `tools/browser-profile/chrome-user-data-advanced` 和 `output/advanced-release/AI-RoundTable-advanced`。如果 `9222` 属于别的项目（例如上传后台 profile），不要碰它；使用 Advanced 启动入口：
+如果用户明确恢复 Advanced 附件实验，AI-RoundTable Advanced 附件验证必须连到 `tools/browser-profile/chrome-user-data-advanced` 和 `output/advanced-release/AI-RoundTable-advanced`。如果 `9222` 属于别的项目（例如上传后台 profile），不要碰它；使用 Advanced 启动入口：
 
 ```powershell
 cmd /c npm.cmd run test:chrome:launch:advanced
@@ -227,7 +227,9 @@ cmd /c npm.cmd run test:chrome:launch:advanced
 
 `test:live`、`test:live:group` 和 `test_attachment.mjs` 会读取 `chrome://version` 校验端口和 profile；校验失败时要先修正浏览器会话，不要继续测试。
 
-### 附件结果怎么算成功
+### 附件结果怎么算成功（暂停项）
+
+当前普通用户/Lite 方向不开放附件统一上传。带附件的公开体验不应引导用户自动发送；建议让用户把重要内容直接粘贴到问题里。
 
 带附件群发只在 `attachmentResults[]` 同时满足以下字段时，才算自动附件上传成功：
 
@@ -244,9 +246,9 @@ code = attachment_cdp_uploaded
 - `attachment_upload_failed`
 - 模型回复了文字但没有上述附件结果字段
 
-带附件发送默认严格阻断：附件未确认上传时，扩展不再自动改发纯文本。测试报告里如果看到 `manual_required`、`unsupported`、`attachment_cdp_failed` 或 `attachment_upload_failed`，应按阻断/失败处理。
+如果未来明确恢复附件实验，仍沿用严格阻断：附件未确认上传时，扩展不再自动改发纯文本。测试报告里如果看到 `manual_required`、`unsupported`、`attachment_cdp_failed` 或 `attachment_upload_failed`，应按阻断/失败处理。
 
-### 附件群发怎么缩小范围
+### 附件群发怎么缩小范围（仅恢复实验时）
 
 附件群发按层级验证，不要直接跑全量矩阵：
 

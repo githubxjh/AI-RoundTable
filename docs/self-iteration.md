@@ -8,6 +8,8 @@
 
 目标不是盲目自动化，而是做有证据的迭代。能跑的安全检查就跑，遇到登录、验证、验证码、2FA 或站点阻断时，就清楚停下并说明原因。
 
+当前默认产品线是 Lite/public。Advanced/local 附件验证已暂停为内部实验资料；除非用户明确要求恢复附件方向，日常自迭代不要跑 Advanced 包、Advanced Chrome 或附件 live。
+
 ## 调试收敛闸门
 
 当问题涉及真实站点、群发、附件、CDP、Chrome profile 或模型适配器时，先按 `docs/debugging-convergence.md` 收敛，不要边猜边改。
@@ -106,10 +108,10 @@ cmd /c npm.cmd run test:chrome:launch
 cmd /c npm.cmd run iterate:live
 ```
 
-跑真实群发或附件 live 前，先确认当前 attach Chrome 是正确浏览器，而不是别的项目占用的 CDP 端口。普通文本 live 和 Advanced 附件 live 的 profile 不同：
+跑真实群发 live 前，先确认当前 attach Chrome 是正确浏览器，而不是别的项目占用的 CDP 端口。普通文本 live 和暂停的 Advanced 附件 live 的 profile 不同：
 
 - 普通文本 live：`tools\browser-profile\chrome-user-data`
-- Advanced 附件 live：`tools\browser-profile\chrome-user-data-advanced`
+- Advanced 附件 live（暂停，仅显式恢复实验时）：`tools\browser-profile\chrome-user-data-advanced`
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" |
@@ -117,16 +119,16 @@ Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" |
   Select-Object ProcessId, CommandLine
 ```
 
-如果要测 Advanced 附件，先运行：
+如果用户明确要求恢复 Advanced 附件实验，先运行：
 
 ```powershell
 cmd /c npm.cmd run release:advanced
 cmd /c npm.cmd run test:chrome:launch:advanced
 ```
 
-Advanced 命令行必须指向 `tools\browser-profile\chrome-user-data-advanced`，并加载 `output\advanced-release\AI-RoundTable-advanced`。如果 `9222` 指向别的项目，例如 `D:\丹纳赫实施资料上传\.chrome-upload-profile`，不要关闭它，也不要把它当成 AI-RoundTable 证据。
+Advanced 命令行必须指向 `tools\browser-profile\chrome-user-data-advanced`，并加载 `output\advanced-release\AI-RoundTable-advanced`。如果 `9222` 指向别的项目，例如 `D:\丹纳赫实施资料上传\.chrome-upload-profile`，不要关闭它，也不要把它当成 AI-RoundTable 证据。没有明确恢复实验请求时，不要运行这些命令。
 
-如果要测群发矩阵，不要只打开其中一两个模型页；先把目标模型页都准备好。例如测 ChatGPT / Doubao 附件，同时保留 DeepSeek 登录态检查时，要确认当前 Advanced attach 浏览器下至少有 `https://chatgpt.com/`、`https://www.doubao.com/chat/`、`https://chat.deepseek.com/` 三个标签页。
+如果未来明确恢复 Advanced 附件矩阵，不要只打开其中一两个模型页；先把目标模型页都准备好。例如测 ChatGPT / Doubao 附件，同时保留 DeepSeek 登录态检查时，要确认当前 Advanced attach 浏览器下至少有 `https://chatgpt.com/`、`https://www.doubao.com/chat/`、`https://chat.deepseek.com/` 三个标签页。
 
 更窄的 live 矩阵：
 

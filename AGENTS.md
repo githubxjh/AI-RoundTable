@@ -12,9 +12,9 @@
 
 - AI-RoundTable 是一个 Chrome MV3 扩展，带 side panel、多模型适配器、router/review 流程，以及基于 Playwright 的 smoke/live 验证。
 - 官方模型名保持英文：ChatGPT、Claude、Grok、Gemini、Doubao、DeepSeek。
-- 附件策略分两条线：
-  - Lite/商店版：不声明 `debugger`，只做低权限尝试、剪贴板/手动辅助和明确降级。
-  - Advanced/本地版：使用 `manifest.advanced.json`，声明 `debugger` 和 `downloads`，通过 CDP `DOM.setFileInputFiles` 在临时落盘后注入附件。
+- 当前产品重心是 Lite/public 版本：低权限、可分享、稳定文本群发和评审流程优先。
+- 附件统一上传暂不面向普通用户开放，也不是近期默认开发目标。对外文案必须明确“附件暂不支持自动群发”，不要暗示会自动降级或自动上传。
+- Advanced/local 版本保留为内部实验线：它使用 `manifest.advanced.json`，声明 `debugger` 和 `downloads`，曾用于 CDP 附件注入研究；除非用户明确要求恢复 Advanced 实验，否则不要继续投入附件修复、live 验证或生成包改动。
 - `output/playwright/` 是浏览器证据的标准输出目录。
 
 ## 标准流程
@@ -53,9 +53,9 @@
 
 ## 调试收敛规则
 
-- 涉及 live 站点、群发、附件、CDP、Chrome profile 或模型适配器的问题，先按 `docs/debugging-convergence.md` 写出最小失败样本和字段级成功标准。
+- 涉及 live 站点、群发、CDP、Chrome profile 或模型适配器的问题，先按 `docs/debugging-convergence.md` 写出最小失败样本和字段级成功标准。
 - 每轮调试只验证一个假设；改代码前写清本轮命令、证据路径、预期证伪结果和下一步决策。
-- 附件群发必须从单模型、单文件、单动作逐层放大到双模型和五模型；不要直接在全矩阵里猜。
+- 附件群发目前是暂停项；只有用户明确要求恢复 Advanced/附件实验时，才从单模型、单文件、单动作逐层放大到双模型和五模型。
 - 30-45 分钟没有新增证据，或问题落在 Playwright、Chrome extension、MV3、`chrome.debugger`、CDP、文件 input、反自动化边界上时，先做外部检索，再继续改。
 - 如果连续两轮没有新增证据，停止功能修改，更新 `.claude/HANDOFF.md`，说明已排除项、未证明项和下一条最小验证命令。
 
@@ -79,7 +79,7 @@ cmd /c npm.cmd run iterate:live
 
 attach-mode live 会使用 `tools/browser-profile/chrome-user-data` 下的专用 profile。遇到登录、验证码、人工验证、2FA、账号恢复或站点阻断时，要停下来并明确上报，不要硬推自动化。
 
-Advanced/local 附件验证使用独立入口：
+Advanced/local 附件验证是暂停的内部实验入口。不要把它作为日常 Lite 开发或普通用户测试流程；只有用户明确要求恢复附件实验时才运行：
 
 ```powershell
 cmd /c npm.cmd run release:advanced
@@ -87,7 +87,7 @@ cmd /c npm.cmd run test:chrome:launch:advanced
 node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek
 ```
 
-Advanced 线默认应使用 `9333`、`tools/browser-profile/chrome-user-data-advanced` 和 `output/advanced-release/AI-RoundTable-advanced`。不要误连其他项目的 CDP Chrome。
+如果显式恢复 Advanced 线，应使用 `9333`、`tools/browser-profile/chrome-user-data-advanced` 和 `output/advanced-release/AI-RoundTable-advanced`。不要误连其他项目的 CDP Chrome。
 
 ## 浏览器自动化边界
 

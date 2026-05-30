@@ -2,6 +2,8 @@
 
 This project is easy to break by losing context: it depends on real Chrome profiles, live AI sites, generated extension packages, and local-only browser state. Every agent must leave a compact, evidence-backed recovery path before a long task continues or the conversation is likely to be compressed.
 
+Current product direction, as of 2026-05-30: Lite/public is the default development and sharing target. Advanced/local attachment work is paused as an internal lab line and should not be resumed without an explicit user request.
+
 ## Recovery Order
 
 At the start of a resumed session, read these files in order before touching code:
@@ -74,10 +76,10 @@ If two iterations produce no new evidence, or 30-45 minutes pass without narrowi
 
 ## Browser Boundary
 
-There are two different browser lines:
+There are two different browser lines, but only the Lite/public line is active by default:
 
 - Normal attach/live text checks use the dedicated AI-RoundTable profile under `tools/browser-profile/chrome-user-data`.
-- Advanced attachment checks use `tools/browser-profile/chrome-user-data-advanced`, the package `output/advanced-release/AI-RoundTable-advanced`, and CDP port `9333`.
+- Advanced attachment checks are paused/internal only. If the user explicitly reopens that experiment, they use `tools/browser-profile/chrome-user-data-advanced`, the package `output/advanced-release/AI-RoundTable-advanced`, and CDP port `9333`.
 
 Do not kill or reuse another project's Chrome. On this machine, port `9222` has previously belonged to `D:\丹纳赫实施资料上传\.chrome-upload-profile`. If a Chrome process is not clearly the AI-RoundTable profile and expected port, stop and report it.
 
@@ -85,7 +87,7 @@ Before live tests, verify with `chrome://version` through the repository scripts
 
 ## Attachment Success Rule
 
-Text fallback is not attachment success. Attachment broadcasts default to strict blocking: if the attachment is not confirmed, the prompt text must not be sent automatically. A broadcast with attachments is only proven to have uploaded the attachment when the relevant `attachmentResults[]` record has:
+Unified attachment broadcast is paused for users. Text fallback is not attachment success, and user-facing docs should not imply files will be uploaded or silently converted to plain text. If the Advanced attachment experiment is explicitly reopened, attachment broadcasts still default to strict blocking: if the attachment is not confirmed, the prompt text must not be sent automatically. A broadcast with attachments is only proven to have uploaded the attachment when the relevant `attachmentResults[]` record has:
 
 ```text
 attachmentStatus = supported
@@ -93,7 +95,7 @@ method = cdp_advanced
 code = attachment_cdp_uploaded
 ```
 
-Anything else, including `manual_required`, `text_fallback`, `attachment_upload_failed`, or a normal model reply, must be reported as blocked, manual-required, failed, or unproven. Pure-text fallback is allowed only if a future explicit user option is designed and documented.
+Anything else, including `manual_required`, `text_fallback`, `attachment_upload_failed`, or a normal model reply, must be reported as blocked, manual-required, failed, paused, or unproven. Pure-text fallback is allowed only if a future explicit user option is designed and documented.
 
 ## Evidence Rule
 
