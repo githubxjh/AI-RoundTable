@@ -176,6 +176,7 @@ runTest('cdp file chooser injection sets files through the opened input backend 
 
     assert.equal(result.backendNodeId, 31);
     assert.equal(result.fileCount, 1);
+    assert.deepEqual(result.trigger, { clicked: true });
     assert.equal(calls.some(([method]) => method === 'Page.setInterceptFileChooserDialog'), true);
     const runtimeEval = calls.find(([method]) => method === 'Runtime.evaluate');
     assert.equal(runtimeEval[1].userGesture, true);

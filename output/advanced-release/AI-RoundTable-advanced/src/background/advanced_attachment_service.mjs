@@ -179,7 +179,12 @@ export async function setFileInputFilesViaCdpFileChooser(tabId, filePaths, optio
                 files
             });
             await dispatchFileInputEventsForBackendNode(chromeApi, tabId, backendNodeId);
-            return { backendNodeId, fileCount: files.length, mode: chooser?.mode || '' };
+            return {
+                backendNodeId,
+                fileCount: files.length,
+                mode: chooser?.mode || '',
+                trigger: triggerResult?.result?.value || null
+            };
         } finally {
             removeFileChooserListener();
             await sendDebuggerCommand(chromeApi, tabId, 'Page.setInterceptFileChooserDialog', {

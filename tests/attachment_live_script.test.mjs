@@ -142,6 +142,9 @@ runTest('background routes prepared Gemini file chooser uploads through the CDP 
     assert.match(serviceWorkerSource, /prepare\.inputMode === 'file_chooser'/);
     assert.match(serviceWorkerSource, /triggerExpression: prepare\.triggerExpression/);
     assert.match(serviceWorkerSource, /setFileInputFilesWithCdp\(tabId, prepare\.inputSelector/);
+    assert.match(serviceWorkerSource, /VERIFY_PREUPLOADED_ATTACHMENTS/);
+    assert.match(serviceWorkerSource, /verifyPreuploadedAttachmentsForCdp/);
+    assert.match(serviceWorkerSource, /attachment_preupload_ready/);
     assert.match(serviceWorkerSource, /inputMode: response\.inputMode \|\| 'file_input'/);
 });
 

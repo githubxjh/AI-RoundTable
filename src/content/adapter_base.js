@@ -74,6 +74,21 @@ class AdapterBase {
                     });
                 return true;
             }
+
+            if (message.type === 'VERIFY_PREUPLOADED_ATTACHMENTS') {
+                this.verifyPreuploadedAttachments(message.preuploadedAttachmentCount)
+                    .then((result) => sendResponse(result))
+                    .catch(err => {
+                        const code = String(err?.code || '').trim();
+                        sendResponse({
+                            status: 'attachment_preupload_failed',
+                            code: code || 'attachment_upload_failed',
+                            message: err?.message || 'Attachment upload was not confirmed by the page',
+                            diagnostics: this.getAttachmentReadinessDiagnostics(message.preuploadedAttachmentCount)
+                        });
+                    });
+                return true;
+            }
         });
 
         // Start observing DOM for responses
@@ -169,6 +184,38 @@ class AdapterBase {
         }
         const placeholders = Array.from({ length: expectedCount }, () => null);
         await this.waitAttachmentReady(inputEl, placeholders);
+    }
+
+    async verifyPreuploadedAttachments(count) {
+        const expectedCount = Math.max(1, Number(count || 0));
+        await this.waitForPreuploadedAttachments(expectedCount);
+        return {
+            status: 'attachment_preupload_ready',
+            expectedCount,
+            diagnostics: this.getAttachmentReadinessDiagnostics(expectedCount)
+        };
+    }
+
+    getAttachmentReadinessDiagnostics(expectedCount = 1) {
+        const inputSelector = this.getAttachmentInputSelector();
+        const inputEl = inputSelector ? document.querySelector(inputSelector) : null;
+        const busySelectors = this.getAttachmentBusySelectors();
+        const readySelectors = this.getAttachmentReadySelectors();
+        const sendBtn = this.findSendButton();
+
+        return {
+            expectedCount: Math.max(1, Number(expectedCount || 0)),
+            inputSelector,
+            inputFound: Boolean(inputEl),
+            inputVisible: this.isElementVisible(inputEl),
+            inputFileCount: Number(inputEl?.files?.length || 0),
+            busy: this.hasAnySelector(busySelectors),
+            ready: this.hasAnySelector(readySelectors),
+            genericPreview: this._detectGenericFilePreview(),
+            previewCandidates: this.getAttachmentPreviewCandidates(),
+            sendButtonFound: Boolean(sendBtn),
+            sendButtonAvailable: sendBtn ? this.isSendButtonAvailable(sendBtn) : false
+        };
     }
 
     async waitForPreuploadedAttachmentPreview(_expectedCount = 1) {
@@ -450,6 +497,31 @@ class AdapterBase {
             return true;
         }
         return false;
+    }
+
+    getAttachmentPreviewCandidates(limit = 8) {
+        const candidates = document.querySelectorAll([
+            '[class*="file-preview"]',
+            'user-query-file-preview',
+            '[class*="attachment-preview"]',
+            '[class*="preview-thumb"]',
+            '[class*="upload-file"]',
+            '[class*="file-item"]',
+            '[class*="file-tile"]',
+            'img[src^="blob:"]',
+            'img[src^="data:"]'
+        ].join(', '));
+
+        return Array.from(candidates)
+            .filter((el) => this.isElementVisible(el))
+            .filter((el) => el.tagName !== 'INPUT')
+            .slice(0, Math.max(1, Number(limit || 8)))
+            .map((el) => ({
+                tag: String(el.tagName || ''),
+                className: String(el.className || '').slice(0, 160),
+                text: String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+                button: el.tagName === 'BUTTON' || Boolean(el.closest?.('button'))
+            }));
     }
 
     async waitForExpectedFiles(inputEl, expected, timeoutMs = 3000) {

@@ -505,24 +505,33 @@ async function broadcastMessage(text, targets, attachments = [], options = {}) {
 
             if (hasAttachments && capability.method === ATTACHMENT_METHODS.cdpAdvanced) {
                 let advancedStage = null;
+                let prepare = null;
+                let cdpUpload = null;
+                let verify = null;
                 try {
                     if (!advancedStagePromise) {
                         advancedStagePromise = stageAdvancedAttachments(chrome, normalizedAttachments);
                     }
                     advancedStage = await advancedStagePromise;
                     advancedDownloadIds = advancedStage.downloadIds;
-                    const prepare = await prepareAttachmentInputForCdp(tabId, model);
+                    prepare = await prepareAttachmentInputForCdp(tabId, model);
                     if (prepare.inputMode === 'file_chooser') {
-                        await setFileInputFilesViaCdpFileChooser(tabId, advancedStage.filePaths, {
+                        cdpUpload = await setFileInputFilesViaCdpFileChooser(tabId, advancedStage.filePaths, {
                             triggerExpression: prepare.triggerExpression,
                             downloadRoot: advancedStage.downloadRoot,
                             allowedFilePaths: advancedStage.filePaths
                         }, chrome);
                     } else {
-                        await setFileInputFilesWithCdp(tabId, prepare.inputSelector, advancedStage.filePaths, {
+                        cdpUpload = await setFileInputFilesWithCdp(tabId, prepare.inputSelector, advancedStage.filePaths, {
                             downloadRoot: advancedStage.downloadRoot,
                             allowedFilePaths: advancedStage.filePaths
                         }, chrome);
+                    }
+                    verify = await verifyPreuploadedAttachmentsForCdp(tabId, model, normalizedAttachments.length);
+                    if (verify.status !== 'attachment_preupload_ready') {
+                        const detail = verify.message || verify.reason || 'Attachment upload was not confirmed by the page';
+                        const diagnostics = verify.diagnostics ? ` diagnostics=${JSON.stringify(verify.diagnostics).slice(0, 500)}` : '';
+                        throw new Error(`${detail}.${diagnostics}`);
                     }
                     const response = await sendMessageToTab(tabId, {
                         type: 'INPUT_PROMPT',
@@ -542,10 +551,10 @@ async function broadcastMessage(text, targets, attachments = [], options = {}) {
                             ? 'attachment_cdp_uploaded'
                             : String(response?.code || 'attachment_cdp_failed'),
                         reason: response?.status === 'input_simulated'
-                            ? 'Attachment uploaded through Advanced CDP path'
+                            ? `Attachment uploaded through Advanced CDP path (fileCount=${cdpUpload?.fileCount || normalizedAttachments.length})`
                             : String(response?.message || response?.error || 'Advanced CDP attachment upload failed')
                     });
-                    results.push({ model, phase: 'cdp_advanced', response, ...record });
+                    results.push({ model, phase: 'cdp_advanced', cdpUpload, verify, response, ...record });
 
                     if (response?.status === 'input_simulated') {
                         sentModels.push(model);
@@ -595,6 +604,15 @@ async function broadcastMessage(text, targets, attachments = [], options = {}) {
                         method: ATTACHMENT_METHODS.textFallback,
                         code: 'attachment_cdp_failed',
                         reason: error?.message || 'Advanced CDP attachment upload failed'
+                    });
+                    results.push({
+                        model,
+                        phase: 'cdp_advanced_failed',
+                        prepare: summarizeAttachmentPrepareForResult(prepare),
+                        cdpUpload,
+                        verify,
+                        error: record.reason,
+                        ...record
                     });
                     const fallbackHandled = await sendTextFallbackForAttachmentIssue({
                         tabId,
@@ -859,6 +877,26 @@ async function prepareAttachmentInputForCdp(tabId, model) {
         inputSelector: response.inputSelector || 'input[type="file"]',
         triggerExpression: response.triggerExpression || ''
     };
+}
+
+function summarizeAttachmentPrepareForResult(prepare) {
+    if (!prepare || typeof prepare !== 'object') return null;
+    return {
+        status: prepare.status || '',
+        inputMode: prepare.inputMode || '',
+        inputSelector: prepare.inputSelector || '',
+        inputVisible: Boolean(prepare.inputVisible),
+        multiple: Boolean(prepare.multiple),
+        triggerExpressionLength: String(prepare.triggerExpression || '').length
+    };
+}
+
+async function verifyPreuploadedAttachmentsForCdp(tabId, model, count) {
+    return sendMessageToTab(tabId, {
+        type: 'VERIFY_PREUPLOADED_ATTACHMENTS',
+        model,
+        preuploadedAttachmentCount: count
+    });
 }
 
 async function routeMessage(message) {

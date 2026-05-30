@@ -1,5 +1,5 @@
-export function collectGeminiUploadDiagnosticsFromPage() {
-    const now = new Date().toISOString();
+export async function collectGeminiUploadDiagnosticsFromPage() {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
     const visible = (node) => Boolean(node && node.getClientRects && node.getClientRects().length > 0);
     const labelFor = (node) => normalizeText([
@@ -32,6 +32,25 @@ export function collectGeminiUploadDiagnosticsFromPage() {
         if (/\u4e0a\u4f20\u548c\u5de5\u5177|upload and tools|add files?|attach files?/i.test(label)) return true;
         return ['add', 'plus', 'attach_file'].includes(iconName);
     };
+    const clickTarget = (node) => {
+        if (!node) return false;
+        const target = node.closest?.('button, [role="button"]') || node;
+        target.focus?.();
+        if (typeof target.dispatchEvent === 'function' && typeof MouseEvent === 'function') {
+            ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((eventType) => {
+                target.dispatchEvent(new MouseEvent(eventType, {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                }));
+            });
+        }
+        if (typeof target.click === 'function') {
+            target.click();
+            return true;
+        }
+        return false;
+    };
     const selectors = [
         'input[type="file"]',
         'button[data-test-id="local-images-files-uploader-button"]',
@@ -50,64 +69,106 @@ export function collectGeminiUploadDiagnosticsFromPage() {
         'mat-icon[data-mat-icon-name="plus"]',
         'mat-icon[data-mat-icon-name="attach_file"]'
     ];
-    const seen = new Set();
-    const candidates = [];
+    const collectItems = () => {
+        const seen = new Set();
+        const items = [];
 
-    Array.from(document.querySelectorAll(selectors.join(','))).forEach((node) => {
-        const target = node.closest?.('input[type="file"], button, [role="button"], [role="menuitem"], .mat-mdc-menu-item, [xapfileselectortrigger]')
-            || node;
-        if (seen.has(target)) return;
-        seen.add(target);
+        Array.from(document.querySelectorAll(selectors.join(','))).forEach((node) => {
+            const target = node.closest?.('input[type="file"], button, [role="button"], [role="menuitem"], .mat-mdc-menu-item, [xapfileselectortrigger]')
+                || node;
+            if (seen.has(target)) return;
+            seen.add(target);
 
-        const label = normalizeText([labelFor(target), labelFor(node)].join(' '));
-        const special = node.matches?.('.hidden-local-file-upload-button, .hidden-local-upload-button, .hidden-local-file-image-selector-button, [xapfileselectortrigger]')
-            || target.matches?.('.hidden-local-file-upload-button, .hidden-local-upload-button, .hidden-local-file-image-selector-button, [xapfileselectortrigger]');
-        const fileInput = target.matches?.('input[type="file"]');
-        const iconName = String(node.getAttribute?.('data-mat-icon-name') || target.querySelector?.('mat-icon')?.getAttribute?.('data-mat-icon-name') || '');
-        const historyAction = isHistoryActionMenu(target, label, iconName);
-        const uploadMenuCandidate = !historyAction && isUploadMenuLabel(label, iconName);
-        const uploadRelated = Boolean(
-            !historyAction
-            && (
-                fileInput
-                || special
-                || uploadMenuCandidate
-                || /Upload|upload|Attach|attachment|file|image|Drive|\u4e0a\u4f20|\u9644\u4ef6|\u6587\u4ef6|\u56fe\u7247|\u4e91\u7aef|\u672c\u5730|\u8bbe\u5907/i.test(label)
-            )
-        );
-        if (!uploadRelated) return;
+            const label = normalizeText([labelFor(target), labelFor(node)].join(' '));
+            const special = node.matches?.('.hidden-local-file-upload-button, .hidden-local-upload-button, .hidden-local-file-image-selector-button, [xapfileselectortrigger]')
+                || target.matches?.('.hidden-local-file-upload-button, .hidden-local-upload-button, .hidden-local-file-image-selector-button, [xapfileselectortrigger]');
+            const fileInput = target.matches?.('input[type="file"]');
+            const iconName = String(node.getAttribute?.('data-mat-icon-name') || target.querySelector?.('mat-icon')?.getAttribute?.('data-mat-icon-name') || '');
+            const historyAction = isHistoryActionMenu(target, label, iconName);
+            const uploadMenuCandidate = !historyAction && isUploadMenuLabel(label, iconName);
+            const uploadRelated = Boolean(
+                !historyAction
+                && (
+                    fileInput
+                    || special
+                    || uploadMenuCandidate
+                    || /Upload|upload|Attach|attachment|file|image|Drive|\u4e0a\u4f20|\u9644\u4ef6|\u6587\u4ef6|\u56fe\u7247|\u4e91\u7aef|\u672c\u5730|\u8bbe\u5907/i.test(label)
+                )
+            );
+            if (!uploadRelated) return;
 
-        candidates.push({
-            ...describeNode(target),
-            label: label.slice(0, 220),
-            special: Boolean(special),
-            fileInput: Boolean(fileInput),
-            uploadMenuCandidate: Boolean(uploadMenuCandidate),
-            localFileCandidate: Boolean(!historyAction && (isLocalFileLabel(label) || fileInput || special)),
-            accept: fileInput ? String(target.getAttribute?.('accept') || '') : '',
-            multiple: fileInput ? Boolean(target.multiple) : false
+            items.push({
+                node,
+                candidate: {
+                    ...describeNode(target),
+                    label: label.slice(0, 220),
+                    special: Boolean(special),
+                    fileInput: Boolean(fileInput),
+                    uploadMenuCandidate: Boolean(uploadMenuCandidate),
+                    localFileCandidate: Boolean(!historyAction && (isLocalFileLabel(label) || fileInput || special)),
+                    accept: fileInput ? String(target.getAttribute?.('accept') || '') : '',
+                    multiple: fileInput ? Boolean(target.multiple) : false
+                }
+            });
         });
-    });
 
-    const visibleLocalCandidates = candidates.filter((item) => item.visible && item.localFileCandidate);
-    const uploadMenuCandidates = candidates.filter((item) => item.visible && item.uploadMenuCandidate);
-    const hiddenTriggers = candidates.filter((item) => item.special);
-    const fileInputs = candidates.filter((item) => item.fileInput);
+        return items;
+    };
+    const snapshot = () => {
+        const items = collectItems();
+        const candidates = items.map((item) => item.candidate);
+        const visibleLocalCandidates = candidates.filter((item) => item.visible && item.localFileCandidate);
+        const uploadMenuCandidates = candidates.filter((item) => item.visible && item.uploadMenuCandidate);
+        const hiddenTriggers = candidates.filter((item) => item.special);
+        const fileInputs = candidates.filter((item) => item.fileInput);
 
+        return {
+            status: 'ok',
+            kind: 'gemini_attachment_upload_dom',
+            collectedAt: new Date().toISOString(),
+            url: String(location.href || ''),
+            title: String(document.title || '').slice(0, 160),
+            counts: {
+                candidates: candidates.length,
+                visibleLocalCandidates: visibleLocalCandidates.length,
+                uploadMenuCandidates: uploadMenuCandidates.length,
+                hiddenTriggers: hiddenTriggers.length,
+                fileInputs: fileInputs.length
+            },
+            candidates: candidates.slice(0, 30),
+            items
+        };
+    };
+    const initial = snapshot();
+    const probe = {
+        attempted: false,
+        clicked: false,
+        target: null
+    };
+    let final = initial;
+
+    if (initial.counts.visibleLocalCandidates === 0 && initial.counts.uploadMenuCandidates > 0) {
+        probe.attempted = true;
+        const menuItem = initial.items
+            .filter((item) => item.candidate.visible && item.candidate.uploadMenuCandidate)
+            .sort((a, b) => {
+                const aPlus = /\u4e0a\u4f20\u548c\u5de5\u5177|upload and tools/i.test(a.candidate.label) ? 1 : 0;
+                const bPlus = /\u4e0a\u4f20\u548c\u5de5\u5177|upload and tools/i.test(b.candidate.label) ? 1 : 0;
+                return bPlus - aPlus;
+            })[0];
+        probe.target = menuItem?.candidate || null;
+        probe.clicked = clickTarget(menuItem?.node || null);
+        if (probe.clicked) {
+            await sleep(700);
+            final = snapshot();
+        }
+    }
+
+    const { items: _items, ...publicFinal } = final;
     return {
-        status: 'ok',
-        kind: 'gemini_attachment_upload_dom',
-        collectedAt: now,
-        url: String(location.href || ''),
-        title: String(document.title || '').slice(0, 160),
-        counts: {
-            candidates: candidates.length,
-            visibleLocalCandidates: visibleLocalCandidates.length,
-            uploadMenuCandidates: uploadMenuCandidates.length,
-            hiddenTriggers: hiddenTriggers.length,
-            fileInputs: fileInputs.length
-        },
-        candidates: candidates.slice(0, 30)
+        ...publicFinal,
+        initialCounts: initial.counts,
+        probe
     };
 }
 

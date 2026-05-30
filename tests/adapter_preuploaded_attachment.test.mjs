@@ -224,6 +224,73 @@ runTest('preuploaded CDP attachments can be ready from visible previews without 
     assert.match(queriedSelector, /file-preview/);
 });
 
+runTest('preuploaded verification returns diagnostics after preview confirmation', async () => {
+    const { AdapterBase, document } = createHarness();
+    const preview = {
+        tagName: 'DIV',
+        className: 'new-file-preview-container',
+        innerText: '附件5.pdf',
+        textContent: '附件5.pdf',
+        closest() {
+            return null;
+        },
+        getAttribute() {
+            return '';
+        },
+        getClientRects() {
+            return [{}];
+        }
+    };
+    class TestAdapter extends AdapterBase {
+        constructor() {
+            super('TestModel');
+            this._attachmentReadyTimeoutMs = 200;
+        }
+        async findAttachmentInput() {
+            return null;
+        }
+        findSendButton() {
+            return null;
+        }
+    }
+
+    document.querySelectorAll = (selector) => selector.includes('file-preview') ? [preview] : [];
+    document.defaultView = {
+        getComputedStyle() {
+            return { display: 'block', visibility: 'visible', opacity: '1' };
+        }
+    };
+
+    const adapter = new TestAdapter();
+    const result = await adapter.verifyPreuploadedAttachments(1);
+
+    assert.equal(result.status, 'attachment_preupload_ready');
+    assert.equal(result.diagnostics.genericPreview, true);
+    assert.equal(result.diagnostics.previewCandidates.length, 1);
+    assert.equal(result.diagnostics.previewCandidates[0].text, '附件5.pdf');
+});
+
+runTest('preuploaded verification reports failure when no preview is present', async () => {
+    const { AdapterBase, document } = createHarness();
+    class TestAdapter extends AdapterBase {
+        constructor() {
+            super('TestModel');
+            this._attachmentReadyTimeoutMs = 80;
+        }
+        async findAttachmentInput() {
+            return null;
+        }
+    }
+
+    document.querySelectorAll = () => [];
+
+    const adapter = new TestAdapter();
+    await assert.rejects(
+        () => adapter.verifyPreuploadedAttachments(1),
+        /File input was not found after CDP attachment upload/
+    );
+});
+
 runTest('preuploaded CDP attachments still fail when no input or preview exists', async () => {
     const { AdapterBase, document } = createHarness();
     class TestAdapter extends AdapterBase {
