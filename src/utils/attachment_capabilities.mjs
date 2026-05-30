@@ -53,6 +53,7 @@ export const ATTACHMENT_STATUS = Object.freeze({
     manualRequired: 'manual_required',
     unsupported: 'unsupported',
     failed: 'failed',
+    blocked: 'blocked',
     textFallback: 'text_fallback'
 });
 
@@ -63,30 +64,34 @@ const ALL_KINDS = Object.freeze(['image', 'pdf', 'text']);
 
 const CAPABILITY_MATRIX = Object.freeze({
     ChatGPT: {
-        domExperimental: ALL_KINDS,
-        clipboardAssist: ['image'],
-        cdpAdvanced: ALL_KINDS
+        domExperimental: [],
+        clipboardAssist: [],
+        manualRequired: ALL_KINDS,
+        cdpAdvanced: []
     },
     Gemini: {
-        domExperimental: ALL_KINDS,
-        clipboardAssist: ['image'],
+        domExperimental: [],
+        clipboardAssist: [],
+        manualRequired: ALL_KINDS,
         cdpAdvanced: ALL_KINDS
     },
     Grok: {
-        domExperimental: ALL_KINDS,
+        domExperimental: [],
         clipboardAssist: [],
-        cdpAdvanced: ALL_KINDS
+        manualRequired: ALL_KINDS,
+        cdpAdvanced: []
     },
     Doubao: {
-        domExperimental: ALL_KINDS,
+        domExperimental: [],
         clipboardAssist: [],
-        cdpAdvanced: ALL_KINDS
+        manualRequired: ALL_KINDS,
+        cdpAdvanced: []
     },
     DeepSeek: {
         domExperimental: [],
         clipboardAssist: [],
         manualRequired: ALL_KINDS,
-        cdpAdvanced: ALL_KINDS
+        cdpAdvanced: []
     }
 });
 
@@ -230,7 +235,7 @@ export function getAttachmentCapability(model, attachments = [], options = {}) {
             status: ATTACHMENT_STATUS.manualRequired,
             method: ATTACHMENT_METHODS.manual,
             code: 'attachment_manual_required',
-            reason: `${normalizedModel} requires manual attachment upload in Lite mode`
+            reason: `${normalizedModel} requires manual attachment upload on the target page`
         };
     }
 

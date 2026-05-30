@@ -14,10 +14,19 @@ export function buildChromeLaunchArgs({
     cdpPort,
     userDataDir,
     profileName,
+    extensionPath = '',
     startupUrls = DEFAULT_CHROME_START_URLS
 } = {}) {
     if (!cdpPort || !userDataDir || !profileName) {
         throw new Error('cdpPort, userDataDir, and profileName are required');
+    }
+
+    const extensionArgs = [];
+    if (extensionPath) {
+        extensionArgs.push(
+            `--disable-extensions-except=${extensionPath}`,
+            `--load-extension=${extensionPath}`
+        );
     }
 
     return [
@@ -27,6 +36,7 @@ export function buildChromeLaunchArgs({
         '--new-window',
         '--no-first-run',
         '--no-default-browser-check',
+        ...extensionArgs,
         ...startupUrls.map((item) => String(item || '').trim()).filter(Boolean)
     ];
 }

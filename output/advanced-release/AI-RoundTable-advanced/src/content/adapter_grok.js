@@ -44,7 +44,11 @@ class GrokAdapter extends AdapterBase {
             throw new Error('GrokAdapter: failed to trigger send');
         }
 
-        this.onSendPostProcessing();
+        return {
+            inputEl,
+            text,
+            sendButtonBefore: sendBtn
+        };
     }
 
     getInputSelector() {

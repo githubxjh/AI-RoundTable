@@ -65,10 +65,31 @@ class ChatGPTAdapter extends AdapterBase {
         ].join(', ');
     }
 
+    async prepareAttachmentInput() {
+        await this.openAttachmentUIIfNeeded();
+        this.assertAttachmentQuotaAvailable();
+        const plusButton = document.querySelector('#composer-plus-btn');
+        if (plusButton && String(plusButton.getAttribute?.('aria-expanded') || '').toLowerCase() === 'true') {
+            this.simulateClick(plusButton);
+            await this.delay(120);
+        }
+        return super.prepareAttachmentInput();
+    }
+
+    assertAttachmentQuotaAvailable() {
+        const text = String(document.body?.innerText || '');
+        if (/获取\s*Plus\s*以获享更多上传限额|more upload/i.test(text)
+            || /等待\s*\d+\s*(?:hours?|小时|分钟|minutes?)[\s\S]{0,20}再次上传/i.test(text)) {
+            throw this.createAttachmentError(
+                'attachment_quota_blocked',
+                'ChatGPT upload quota is currently blocked on this account'
+            );
+        }
+    }
+
     getAttachmentBusySelectors() {
         return [
             '[aria-label*="Uploading"]',
-            '[aria-label*="\u4e0a\u4f20"]',
             '[data-testid*="upload"][aria-busy="true"]',
             '[data-testid*="file-upload"][aria-busy="true"]',
             '[role="progressbar"]'

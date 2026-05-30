@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 
 let envModule;
@@ -12,6 +13,9 @@ try {
 const {
     buildTestingPaths,
     buildExtensionLaunchArgs,
+    DEFAULT_ADVANCED_CDP_PORT,
+    assertChromeForTestingPath,
+    clearProfileRuntimeCaches,
     shouldCopyProfileEntry
 } = envModule;
 
@@ -27,6 +31,9 @@ runTest('playwright env module is loadable', () => {
     assert.ok(!envModule.__importError, envModule.__importError?.message);
     assert.equal(typeof buildTestingPaths, 'function');
     assert.equal(typeof buildExtensionLaunchArgs, 'function');
+    assert.equal(DEFAULT_ADVANCED_CDP_PORT, 9333);
+    assert.equal(typeof assertChromeForTestingPath, 'function');
+    assert.equal(typeof clearProfileRuntimeCaches, 'function');
     assert.equal(typeof shouldCopyProfileEntry, 'function');
 });
 
@@ -65,10 +72,18 @@ runTest('default testing paths target repo-local output and browser-profile dire
         paths.automationUserDataDir,
         path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data')
     );
+    assert.equal(
+        paths.advancedAutomationUserDataDir,
+        path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data-advanced')
+    );
     assert.equal(paths.automationProfileName, 'Default');
     assert.equal(
         paths.automationProfileDir,
         path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data', 'Default')
+    );
+    assert.equal(
+        paths.advancedAutomationProfileDir,
+        path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data-advanced', 'Default')
     );
     assert.equal(
         paths.automationPreferencesPath,
@@ -77,6 +92,14 @@ runTest('default testing paths target repo-local output and browser-profile dire
     assert.equal(
         paths.automationSecurePreferencesPath,
         path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data', 'Default', 'Secure Preferences')
+    );
+    assert.equal(
+        paths.advancedAutomationPreferencesPath,
+        path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data-advanced', 'Default', 'Preferences')
+    );
+    assert.equal(
+        paths.advancedAutomationSecurePreferencesPath,
+        path.join(repoRoot, 'tools', 'browser-profile', 'chrome-user-data-advanced', 'Default', 'Secure Preferences')
     );
     assert.equal(
         paths.smokeUserDataDir,
@@ -90,14 +113,27 @@ runTest('default testing paths target repo-local output and browser-profile dire
     assert.equal(paths.cdpEndpoint, 'http://127.0.0.1:9222');
 });
 
+runTest('advanced testing paths can default to the dedicated 9333 CDP port', () => {
+    const paths = buildTestingPaths({
+        repoRoot,
+        env: {},
+        defaultCdpPort: DEFAULT_ADVANCED_CDP_PORT
+    });
+
+    assert.equal(paths.cdpPort, 9333);
+    assert.equal(paths.cdpEndpoint, 'http://127.0.0.1:9333');
+});
+
 runTest('explicit environment overrides win over defaults', () => {
     const paths = buildTestingPaths({
         repoRoot,
         env: {
             AI_RT_PLAYWRIGHT_CHANNEL: 'chrome-beta',
             AI_RT_CHROME_EXE: 'D:\\Apps\\Chrome\\chrome.exe',
+            AI_RT_CHROME_FOR_TESTING_EXE: 'D:\\Apps\\Chrome for Testing\\chrome.exe',
             AI_RT_CHROME_USER_DATA_SOURCE: 'D:\\Profiles\\Chrome User Data',
             AI_RT_TEST_PROFILE_DIR: 'D:\\Automation\\AI RoundTable Profile',
+            AI_RT_ADVANCED_TEST_PROFILE_DIR: 'D:\\Automation\\AI RoundTable Advanced Profile',
             AI_RT_CDP_PORT: '9333',
             AI_RT_CHROME_PROFILE_NAME: 'Profile 7'
         }
@@ -109,10 +145,21 @@ runTest('explicit environment overrides win over defaults', () => {
     assert.equal(paths.chromeProfileName, 'Profile 7');
     assert.equal(paths.profileSourceDir, 'D:\\Profiles\\Chrome User Data\\Profile 7');
     assert.equal(paths.automationUserDataDir, 'D:\\Automation\\AI RoundTable Profile');
+    assert.equal(paths.advancedAutomationUserDataDir, 'D:\\Automation\\AI RoundTable Advanced Profile');
+    assert.equal(paths.chromeForTestingExecutable, 'D:\\Apps\\Chrome for Testing\\chrome.exe');
     assert.equal(paths.automationProfileName, 'Default');
     assert.equal(paths.automationProfileDir, 'D:\\Automation\\AI RoundTable Profile\\Default');
     assert.equal(paths.cdpPort, 9333);
     assert.equal(paths.cdpEndpoint, 'http://127.0.0.1:9333');
+});
+
+runTest('chrome for testing path validator gives setup guidance when missing', () => {
+    const message = assertChromeForTestingPath({
+        chromeForTestingExecutable: path.join(repoRoot, 'missing-cft.exe')
+    });
+
+    assert.match(message, /Chrome for Testing executable not found/);
+    assert.match(message, /playwright install chromium/);
 });
 
 runTest('invalid cdp port falls back to default', () => {
@@ -146,6 +193,34 @@ runTest('profile copy filter excludes cache-like content and keeps login/session
     assert.equal(shouldCopyProfileEntry('Default\\Code Cache\\js\\index'), false);
     assert.equal(shouldCopyProfileEntry('Default\\Cache\\Cache_Data\\f_000123'), false);
     assert.equal(shouldCopyProfileEntry('Default\\GPUCache\\data_0'), false);
+});
+
+runTest('runtime cache cleanup removes extension caches and keeps session storage', () => {
+    const tempRoot = path.join(
+        repoRoot,
+        'output',
+        'playwright',
+        'unit-profile-cache-cleanup',
+        `run-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    );
+    const profileDir = path.join(tempRoot, 'Default');
+    const cacheFile = path.join(profileDir, 'Extension Scripts', '000001.log');
+    const serviceWorkerCacheFile = path.join(profileDir, 'Service Worker', 'ScriptCache', 'index');
+    const sessionFile = path.join(profileDir, 'Local Storage', 'leveldb', '000003.log');
+
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.mkdirSync(path.dirname(serviceWorkerCacheFile), { recursive: true });
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(cacheFile, 'cached-extension-script', 'utf8');
+    fs.writeFileSync(serviceWorkerCacheFile, 'cached-service-worker-script', 'utf8');
+    fs.writeFileSync(sessionFile, 'session-data', 'utf8');
+
+    const removed = clearProfileRuntimeCaches(tempRoot, 'Default');
+
+    assert.ok(removed.some((item) => item.endsWith(path.join('Default', 'Extension Scripts'))));
+    assert.ok(removed.some((item) => item.endsWith(path.join('Service Worker', 'ScriptCache'))));
+    assert.equal(fs.existsSync(sessionFile), true);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
 });
 
 let passed = 0;

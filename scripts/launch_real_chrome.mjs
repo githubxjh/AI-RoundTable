@@ -50,6 +50,7 @@ const launchArgs = buildChromeLaunchArgs({
     cdpPort: paths.cdpPort,
     userDataDir: paths.automationUserDataDir,
     profileName: paths.automationProfileName,
+    extensionPath: paths.extensionPath,
     startupUrls: DEFAULT_CHROME_START_URLS
 });
 

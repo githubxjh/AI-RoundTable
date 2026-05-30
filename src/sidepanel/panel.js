@@ -162,6 +162,7 @@ function bindRefs() {
     refs.broadcastFileInput = document.getElementById('broadcast-file-input');
     refs.broadcastAttachBtn = document.getElementById('broadcast-attach-btn');
     refs.broadcastClearFilesBtn = document.getElementById('broadcast-clear-files-btn');
+    refs.geminiAttachmentDiagnosticsBtn = document.getElementById('gemini-attachment-diagnostics-btn');
     refs.broadcastFileList = document.getElementById('broadcast-file-list');
     refs.broadcastFileStatus = document.getElementById('broadcast-file-status');
     refs.broadcastBtn = document.getElementById('broadcast-btn');
@@ -222,6 +223,7 @@ function bindEvents() {
     refs.broadcastBtn?.addEventListener('click', () => { void onBroadcast(); });
     refs.broadcastAttachBtn?.addEventListener('click', onBroadcastAttachClick);
     refs.broadcastClearFilesBtn?.addEventListener('click', onClearBroadcastFiles);
+    refs.geminiAttachmentDiagnosticsBtn?.addEventListener('click', () => { void onGeminiAttachmentDiagnostics(); });
     refs.broadcastFileInput?.addEventListener('change', onSelectBroadcastFiles);
     refs.routerFollowupSource?.addEventListener('change', onFollowupSourceChange);
     refs.routerInput?.addEventListener('input', onRouterSupplementInput);
@@ -768,8 +770,8 @@ async function onBroadcast() {
             const manualModels = summary.manualModels.join(', ');
             const confirmed = await showConfirm(
                 t(
-                    'attachmentLiteManualConfirm',
-                    'Lite 版无法自动代传 {0} 的附件。继续后这些模型会按纯文本发送，请手动在目标网页上传附件。',
+                    'attachmentManualConfirm',
+                    '当前所选模型里有 {0} 仍需要手动上传附件。继续后这些模型会按纯文本发送，请在目标网页手动上传附件。',
                     [manualModels]
                 ),
                 {
@@ -973,6 +975,51 @@ function onClearBroadcastFiles() {
     state.broadcastFiles = [];
     renderBroadcastFileList();
     setBroadcastStatus('info', t('attachmentsCleared', '已清空附件。'));
+}
+
+async function onGeminiAttachmentDiagnostics() {
+    setBroadcastStatus('info', t('geminiAttachmentDiagnosticsRunning', '正在诊断当前 Gemini 附件入口...'));
+    const response = await sendMessage({ type: 'GEMINI_ATTACHMENT_DIAGNOSTICS' });
+    if (response?.status !== 'ok') {
+        const message = response?.code === 'gemini_tab_not_found'
+            ? t('geminiAttachmentDiagnosticsNoTab', '没有找到当前窗口里的 Gemini 标签页。请先打开并激活 Gemini 页面。')
+            : t('geminiAttachmentDiagnosticsFailed', 'Gemini 附件诊断失败：{0}', [
+                response?.message || response?.error || 'Unknown error'
+            ]);
+        setBroadcastStatus('error', message);
+        return;
+    }
+
+    const payload = JSON.stringify(response.diagnostics || {}, null, 2);
+    const copied = await copyTextToClipboard(payload);
+    const summary = String(response.summary || '');
+    const counts = response.diagnostics?.counts || {};
+    const line = t(
+        'geminiAttachmentDiagnosticsDone',
+        'Gemini 附件诊断完成：{0}。候选 {1} 个、可见本地上传 {2} 个、隐藏触发器 {3} 个、file input {4} 个。{5}',
+        [
+            summary,
+            counts.candidates || 0,
+            counts.visibleLocalCandidates || 0,
+            counts.hiddenTriggers || 0,
+            counts.fileInputs || 0,
+            copied
+                ? t('geminiAttachmentDiagnosticsCopied', '诊断 JSON 已复制，可直接发给开发者。')
+                : t('geminiAttachmentDiagnosticsCopyFailed', '诊断 JSON 已输出到控制台，剪贴板复制失败。')
+        ]
+    );
+    console.log('[AI RoundTable] Gemini attachment diagnostics', response.diagnostics);
+    setBroadcastStatus(copied ? 'success' : 'warn', line);
+}
+
+async function copyTextToClipboard(text) {
+    try {
+        await navigator.clipboard.writeText(String(text || ''));
+        return true;
+    } catch (error) {
+        console.warn('copy diagnostics failed', error);
+        return false;
+    }
 }
 
 function onSelectBroadcastFiles(event) {

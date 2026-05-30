@@ -48,6 +48,7 @@ export async function stageAdvancedAttachments(chromeApi = chrome, attachments =
     const taskId = options.taskId || createAttachmentTaskId();
     const downloadIds = [];
     const filePaths = [];
+    let downloadRoot = '';
 
     for (const attachment of attachments) {
         const filename = buildAdvancedDownloadFilename(taskId, attachment?.name);
@@ -60,20 +61,27 @@ export async function stageAdvancedAttachments(chromeApi = chrome, attachments =
             throw new Error(`Download did not expose a local filename for ${attachment?.name || 'attachment'}`);
         }
         filePaths.push(item.filename);
+        if (!downloadRoot) {
+            downloadRoot = inferDownloadRootFromStagedFile(item.filename);
+        }
     }
 
-    return { taskId, downloadIds, filePaths };
+    return { taskId, downloadIds, filePaths, downloadRoot };
 }
 
-export async function setFileInputFilesWithCdp(tabId, selector, filePaths, chromeApi = chrome) {
+export async function setFileInputFilesWithCdp(tabId, selector, filePaths, optionsOrChromeApi = {}, maybeChromeApi) {
     const inputSelector = String(selector || 'input[type="file"]').trim() || 'input[type="file"]';
     const files = (Array.isArray(filePaths) ? filePaths : []).map(String).filter(Boolean);
+    const hasChromeShape = Boolean(optionsOrChromeApi?.debugger || optionsOrChromeApi?.downloads || optionsOrChromeApi?.runtime);
+    const options = hasChromeShape ? {} : (optionsOrChromeApi || {});
+    const chromeApi = hasChromeShape ? optionsOrChromeApi : (maybeChromeApi || chrome);
     if (!Number.isInteger(tabId) || tabId < 0) {
         throw new Error('A valid tabId is required for CDP attachment upload');
     }
     if (files.length === 0) {
         throw new Error('At least one local file path is required for CDP attachment upload');
     }
+    validateAdvancedAttachmentFilePaths(files, options);
 
     return withDebuggerSession(tabId, chromeApi, async () => {
         const { root } = await sendDebuggerCommand(chromeApi, tabId, 'DOM.getDocument', {
@@ -92,8 +100,151 @@ export async function setFileInputFilesWithCdp(tabId, selector, filePaths, chrom
             nodeId,
             files
         });
+        const { object } = await sendDebuggerCommand(chromeApi, tabId, 'DOM.resolveNode', {
+            nodeId
+        });
+        if (object?.objectId) {
+            await sendDebuggerCommand(chromeApi, tabId, 'Runtime.callFunctionOn', {
+                objectId: object.objectId,
+                functionDeclaration: `function() {
+                    this.dispatchEvent(new Event('input', { bubbles: true }));
+                    this.dispatchEvent(new Event('change', { bubbles: true }));
+                }`,
+                awaitPromise: true
+            });
+        }
         return { nodeId, fileCount: files.length };
     });
+}
+
+export function inferDownloadRootFromStagedFile(filename, tempRootName = ADVANCED_TEMP_ROOT) {
+    const normalized = String(filename || '').replace(/\\/g, '/');
+    const tempRoot = sanitizeDownloadPathSegment(tempRootName);
+    const marker = `/${tempRoot}/`;
+    const index = normalized.indexOf(marker);
+    if (index < 0) return '';
+    return normalized.slice(0, index).replace(/\//g, '\\');
+}
+
+export async function setFileInputFilesViaCdpFileChooser(tabId, filePaths, options = {}, chromeApi = chrome) {
+    const files = (Array.isArray(filePaths) ? filePaths : []).map(String).filter(Boolean);
+    const triggerExpression = String(options?.triggerExpression || '').trim();
+    const timeoutMs = Number.isFinite(options?.timeoutMs) ? Math.max(1000, options.timeoutMs) : 10000;
+
+    if (!Number.isInteger(tabId) || tabId < 0) {
+        throw new Error('A valid tabId is required for CDP file chooser attachment upload');
+    }
+    if (files.length === 0) {
+        throw new Error('At least one local file path is required for CDP file chooser attachment upload');
+    }
+    if (!triggerExpression) {
+        throw new Error('A file chooser trigger expression is required for CDP attachment upload');
+    }
+    validateAdvancedAttachmentFilePaths(files, options);
+
+    return withDebuggerSession(tabId, chromeApi, async () => {
+        let removeFileChooserListener = () => {};
+        try {
+            await sendDebuggerCommand(chromeApi, tabId, 'Page.enable');
+            await sendDebuggerCommand(chromeApi, tabId, 'DOM.enable');
+
+            const chooserPromise = waitForFileChooserOpened(chromeApi, tabId, { timeoutMs });
+            removeFileChooserListener = chooserPromise.removeListener || removeFileChooserListener;
+
+            await sendDebuggerCommand(chromeApi, tabId, 'Page.setInterceptFileChooserDialog', {
+                enabled: true
+            });
+            const triggerResult = await sendDebuggerCommand(chromeApi, tabId, 'Runtime.evaluate', {
+                expression: triggerExpression,
+                awaitPromise: true,
+                returnByValue: true,
+                userGesture: true
+            });
+            if (triggerResult?.exceptionDetails) {
+                chooserPromise.catch(() => {});
+                throw new Error(formatRuntimeEvaluationError(triggerResult.exceptionDetails));
+            }
+
+            const chooser = await chooserPromise.catch((error) => {
+                const triggerSummary = safeJsonForError(triggerResult?.result?.value || triggerResult);
+                throw new Error(`${error?.message || 'Timed out waiting for CDP file chooser to open'}; trigger=${triggerSummary}`);
+            });
+            const backendNodeId = Number(chooser?.backendNodeId || 0);
+            if (!backendNodeId) {
+                throw new Error('CDP file chooser did not expose a backend node id');
+            }
+
+            await sendDebuggerCommand(chromeApi, tabId, 'DOM.setFileInputFiles', {
+                backendNodeId,
+                files
+            });
+            await dispatchFileInputEventsForBackendNode(chromeApi, tabId, backendNodeId);
+            return { backendNodeId, fileCount: files.length, mode: chooser?.mode || '' };
+        } finally {
+            removeFileChooserListener();
+            await sendDebuggerCommand(chromeApi, tabId, 'Page.setInterceptFileChooserDialog', {
+                enabled: false
+            }).catch((error) => {
+                console.warn(`Advanced attachment file chooser intercept cleanup failed for tab ${tabId}:`, error);
+            });
+        }
+    });
+}
+
+function formatRuntimeEvaluationError(exceptionDetails = {}) {
+    return String(
+        exceptionDetails?.exception?.description
+        || exceptionDetails?.exception?.value
+        || exceptionDetails?.text
+        || 'CDP file chooser trigger expression failed'
+    );
+}
+
+function safeJsonForError(value) {
+    try {
+        return JSON.stringify(value).slice(0, 800);
+    } catch {
+        return String(value || '').slice(0, 800);
+    }
+}
+
+export function validateAdvancedAttachmentFilePaths(filePaths = [], options = {}) {
+    const tempRootName = sanitizeDownloadPathSegment(options.tempRootName || ADVANCED_TEMP_ROOT);
+    const downloadRoot = String(options.downloadRoot || '').trim();
+    const normalizedFiles = (Array.isArray(filePaths) ? filePaths : []).map(String).filter(Boolean);
+    const allowedFilePaths = (Array.isArray(options.allowedFilePaths) ? options.allowedFilePaths : [])
+        .map((item) => normalizeLocalPathForCompare(item))
+        .filter(Boolean);
+
+    for (const filePath of normalizedFiles) {
+        if (allowedFilePaths.length > 0) {
+            if (!allowedFilePaths.includes(normalizeLocalPathForCompare(filePath))) {
+                throw new Error(`Attachment file path is not in the current Advanced attachment staging set: ${filePath}`);
+            }
+            continue;
+        }
+
+        const normalized = filePath.replace(/\\/g, '/');
+        const needle = `/${tempRootName}/`;
+        const hasTempRoot = normalized.includes(needle)
+            || normalized.endsWith(`/${tempRootName}`)
+            || normalized.startsWith(`${tempRootName}/`);
+        if (!hasTempRoot) {
+            throw new Error(`Attachment file path is outside the Advanced attachment temp root: ${filePath}`);
+        }
+        if (downloadRoot) {
+            const root = downloadRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+            if (!normalized.toLowerCase().startsWith(`${root.toLowerCase()}/`)) {
+                throw new Error(`Attachment file path is outside the expected download root: ${filePath}`);
+            }
+        }
+    }
+
+    return true;
+}
+
+function normalizeLocalPathForCompare(value) {
+    return String(value || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
 export async function withDebuggerSession(tabId, chromeApi = chrome, fn) {
@@ -106,6 +257,61 @@ export async function withDebuggerSession(tabId, chromeApi = chrome, fn) {
             console.warn(`Advanced attachment debugger detach failed for tab ${tabId}:`, error);
         });
     }
+}
+
+function waitForFileChooserOpened(chromeApi, tabId, options = {}) {
+    const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 10000;
+    let timer = null;
+    let settled = false;
+    let listener = null;
+
+    const promise = new Promise((resolve, reject) => {
+        listener = (source, method, params) => {
+            if (settled) return;
+            if (method !== 'Page.fileChooserOpened') return;
+            if (Number(source?.tabId) !== Number(tabId)) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(params || {});
+        };
+
+        const onEvent = chromeApi?.debugger?.onEvent;
+        if (!onEvent || typeof onEvent.addListener !== 'function') {
+            reject(new Error('Chrome debugger file chooser events are unavailable'));
+            return;
+        }
+
+        onEvent.addListener(listener);
+        timer = setTimeout(() => {
+            settled = true;
+            reject(new Error('Timed out waiting for CDP file chooser to open'));
+        }, timeoutMs);
+    });
+
+    promise.removeListener = () => {
+        if (!listener) return;
+        const removeListener = chromeApi?.debugger?.onEvent?.removeListener;
+        if (typeof removeListener === 'function') {
+            removeListener.call(chromeApi.debugger.onEvent, listener);
+        }
+        listener = null;
+    };
+    return promise;
+}
+
+async function dispatchFileInputEventsForBackendNode(chromeApi, tabId, backendNodeId) {
+    const { object } = await sendDebuggerCommand(chromeApi, tabId, 'DOM.resolveNode', {
+        backendNodeId
+    });
+    if (!object?.objectId) return;
+    await sendDebuggerCommand(chromeApi, tabId, 'Runtime.callFunctionOn', {
+        objectId: object.objectId,
+        functionDeclaration: `function() {
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+            this.dispatchEvent(new Event('change', { bubbles: true }));
+        }`,
+        awaitPromise: true
+    });
 }
 
 function sanitizeDownloadPathSegment(value) {

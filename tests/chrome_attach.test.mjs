@@ -32,6 +32,7 @@ runTest('buildChromeLaunchArgs starts real Chrome with remote debugging on the r
         cdpPort: 9222,
         userDataDir: 'C:\\Users\\xiepro\\AppData\\Local\\Google\\Chrome\\User Data',
         profileName: 'Default',
+        extensionPath: 'C:\\Users\\xiepro\\Desktop\\AI-RoundTable',
         startupUrls: ['chrome://extensions/', 'https://gemini.google.com/']
     });
 
@@ -42,6 +43,8 @@ runTest('buildChromeLaunchArgs starts real Chrome with remote debugging on the r
         '--new-window',
         '--no-first-run',
         '--no-default-browser-check',
+        '--disable-extensions-except=C:\\Users\\xiepro\\Desktop\\AI-RoundTable',
+        '--load-extension=C:\\Users\\xiepro\\Desktop\\AI-RoundTable',
         'chrome://extensions/',
         'https://gemini.google.com/'
     ]);

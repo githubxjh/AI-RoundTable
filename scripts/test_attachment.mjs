@@ -8,6 +8,7 @@ import {
 import {
     attachContextDiagnostics,
     attachPageDiagnostics,
+    assertAttachedChromeTarget,
     assertProfileReady,
     captureArtifact,
     capturePageHtml,
@@ -25,14 +26,83 @@ import {
 } from './lib/playwright_runtime.mjs';
 import {
     assertChromePaths,
+    DEFAULT_ADVANCED_CDP_PORT,
     buildTestingPaths
 } from './lib/playwright_env.mjs';
 import {
     buildMissingCdpMessage
 } from './lib/chrome_attach.mjs';
 
-// Models that need pre-upload via Playwright (extension can't do trusted clicks)
-const PLAYWRIGHT_UPLOAD_MODELS = new Set(['DeepSeek']);
+// Create a minimal 1x1 red PNG as test attachment (valid image, tiny size).
+const TEST_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+const ATTACHMENT_MIME_BY_EXT = new Map([
+    ['.png', 'image/png'],
+    ['.jpg', 'image/jpeg'],
+    ['.jpeg', 'image/jpeg'],
+    ['.webp', 'image/webp'],
+    ['.gif', 'image/gif'],
+    ['.pdf', 'application/pdf'],
+    ['.txt', 'text/plain'],
+    ['.md', 'text/markdown'],
+    ['.csv', 'text/csv']
+]);
+
+function parseAttachmentTestArgs(argv = []) {
+    const modelArgs = [];
+    let attachmentPath = '';
+
+    for (let index = 0; index < argv.length; index += 1) {
+        const arg = argv[index];
+        if (arg === '--file' || arg === '--attachment') {
+            attachmentPath = argv[index + 1] || '';
+            index += 1;
+            continue;
+        }
+        if (arg.startsWith('--file=')) {
+            attachmentPath = arg.slice('--file='.length);
+            continue;
+        }
+        if (arg.startsWith('--attachment=')) {
+            attachmentPath = arg.slice('--attachment='.length);
+            continue;
+        }
+        modelArgs.push(arg);
+    }
+
+    return {
+        requestedModels: normalizeLiveModels(modelArgs, DEFAULT_LIVE_CORE_MODELS),
+        attachmentPath
+    };
+}
+
+function readAttachmentFromFile(filePath) {
+    const resolvedPath = path.resolve(filePath);
+    const buffer = fs.readFileSync(resolvedPath);
+    const ext = path.extname(resolvedPath).toLowerCase();
+    return {
+        name: path.basename(resolvedPath),
+        mimeType: ATTACHMENT_MIME_BY_EXT.get(ext) || 'application/octet-stream',
+        size: buffer.length,
+        base64: buffer.toString('base64'),
+        sourcePath: resolvedPath
+    };
+}
+
+function buildDefaultAttachment() {
+    return {
+        name: 'test-image.png',
+        mimeType: 'image/png',
+        size: 68,
+        base64: TEST_PNG_BASE64
+    };
+}
+
+function buildAttachmentPrompt(attachment) {
+    if (String(attachment?.mimeType || '').startsWith('image/')) {
+        return 'Describe the attached image in one sentence.';
+    }
+    return 'Summarize the attached file in one sentence.';
+}
 
 async function uploadFilesViaPlaywright(page, model, testAttachment, logger) {
     const safeName = sanitizeArtifactName(model);
@@ -84,9 +154,8 @@ async function uploadFilesViaPlaywright(page, model, testAttachment, logger) {
     }
 }
 
-const argv = process.argv.slice(2);
-const requestedModels = normalizeLiveModels(argv, DEFAULT_LIVE_CORE_MODELS);
-const paths = buildTestingPaths();
+const { requestedModels, attachmentPath } = parseAttachmentTestArgs(process.argv.slice(2));
+const paths = buildTestingPaths({ defaultCdpPort: DEFAULT_ADVANCED_CDP_PORT });
 const artifactDir = path.join(paths.artifactDir, 'attachment-test');
 const logger = createFileLogger(path.join(artifactDir, 'attachment.log'));
 
@@ -99,9 +168,13 @@ try {
     if (missing.length > 0) {
         throw new Error(missing.join('\n'));
     }
-    assertProfileReady(paths.automationUserDataDir);
+    const expectedProfileRoot = paths.advancedAutomationUserDataDir;
+    assertProfileReady(expectedProfileRoot);
 
     logger.log(`test:attachment:start models=${requestedModels.join(',')} cdp=${paths.cdpEndpoint}`);
+    if (attachmentPath) {
+        logger.log(`test:attachment:file ${path.resolve(attachmentPath)}`);
+    }
 
     const playwright = await importPlaywright();
     const attached = await connectToChromeOverCdp({
@@ -114,28 +187,20 @@ try {
     browser = attached.browser;
     const context = attached.context;
     attachContextDiagnostics(context, { logger });
+    await assertAttachedChromeTarget(context, {
+        expectedUserDataDir: expectedProfileRoot,
+        expectedCdpPort: paths.cdpPort,
+        logger
+    });
 
     const extensionId = await resolveAttachedExtensionId({
         context,
-        repoRoot: paths.repoRoot,
-        profileName: `${paths.automationProfileName} @ ${paths.automationUserDataDir}`,
-        preferencesPath: paths.automationPreferencesPath,
-        securePreferencesPath: paths.automationSecurePreferencesPath
+        repoRoot: path.join(paths.repoRoot, 'output', 'advanced-release', 'AI-RoundTable-advanced'),
+        profileName: `${paths.automationProfileName} @ ${expectedProfileRoot}`,
+        preferencesPath: paths.advancedAutomationPreferencesPath,
+        securePreferencesPath: paths.advancedAutomationSecurePreferencesPath
     });
     logger.log(`extension-id ${extensionId}`);
-
-    // Reload the extension to ensure latest content scripts are loaded
-    logger.log('reloading extension...');
-    const extPage = await context.newPage();
-    await extPage.goto(`chrome://extensions/?id=${extensionId}`, { waitUntil: 'domcontentloaded' });
-    await extPage.waitForTimeout(1000);
-    await extPage.evaluate((extId) => {
-        const btn = document.querySelector('#update-now') || document.querySelector('#dev-reload-button') || document.querySelector('cr-button[aria-label*="Reload"]');
-        if (btn) btn.click();
-    }, extensionId);
-    await extPage.waitForTimeout(2000);
-    await extPage.close();
-    logger.log('extension reloaded');
 
     const panelPage = await openExtensionPanel(context, extensionId, { logger });
     await waitForPanelReady(panelPage);
@@ -147,12 +212,19 @@ try {
     }, { timeoutMs: 20000, intervalMs: 1000 });
     logger.log(`runtime-ping ${JSON.stringify(pingResponse)}`);
 
-    const testAttachment = {
-        name: 'test-image.png',
-        mimeType: 'image/png',
-        size: 68,
-        base64: TEST_PNG_BASE64
-    };
+    const testAttachment = attachmentPath
+        ? readAttachmentFromFile(attachmentPath)
+        : buildDefaultAttachment();
+    const testPrompt = buildAttachmentPrompt(testAttachment);
+
+    const capabilityResponse = await sendRuntimeMessageWithRetry(panelPage, {
+        type: 'ATTACHMENT_CAPABILITIES',
+        targets: requestedModels,
+        attachments: [testAttachment],
+        attachmentMode: 'advanced'
+    }, { timeoutMs: 20000, intervalMs: 1000 });
+    logger.log(`attachment-capabilities ${JSON.stringify(capabilityResponse)}`);
+    assertExpectedRuntimeCapabilities(capabilityResponse);
 
     const results = [];
 
@@ -161,8 +233,7 @@ try {
         const modelArtifactDir = path.join(artifactDir, safeName);
         fs.mkdirSync(modelArtifactDir, { recursive: true });
 
-// Create a minimal 1x1 red PNG as test attachment (valid image, tiny size)
-const TEST_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+        const targetPage = await context.newPage();
         attachPageDiagnostics(targetPage, { label: `target:${safeName}`, logger });
 
         // Also capture console from the target page for adapter logs
@@ -191,9 +262,10 @@ const TEST_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
             logger.log(`${safeName}:broadcast-with-attachment`);
             const broadcastResponse = await sendRuntimeMessageWithRetry(panelPage, {
                 type: 'BROADCAST',
-                text: 'Describe this image in one sentence.',
+                text: testPrompt,
                 targets: [model],
-                attachments: [testAttachment]
+                attachments: [testAttachment],
+                attachmentMode: 'advanced'
             }, { timeoutMs: 35000, intervalMs: 1000 });
 
             logger.log(`${safeName}:broadcast-response ${JSON.stringify(broadcastResponse)}`);
@@ -285,10 +357,15 @@ const TEST_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
             const sentModels = broadcastResponse?.sentModels || [];
             const degraded = broadcastResponse?.degraded || [];
             const failed = broadcastResponse?.failed || [];
+            const attachmentRecord = (broadcastResponse?.attachmentResults || [])
+                .find((item) => item?.model === model);
+            const attachmentOk = attachmentRecord?.attachmentStatus === 'supported'
+                && attachmentRecord?.method === 'cdp_advanced'
+                && attachmentRecord?.code === 'attachment_cdp_uploaded';
 
-            if (sentModels.includes(model)) {
-                logger.log(`${safeName}:PASS (sent successfully)`);
-                results.push({ model, status: 'ok' });
+            if (sentModels.includes(model) && attachmentOk) {
+                logger.log(`${safeName}:PASS (attachment uploaded through Advanced CDP)`);
+                results.push({ model, status: 'ok', attachment: attachmentRecord });
             } else if (degraded.some((d) => d.model === model)) {
                 const info = degraded.find((d) => d.model === model);
                 logger.warn(`${safeName}:DEGRADED ${info?.code || ''} ${info?.reason || ''}`);
@@ -335,11 +412,54 @@ const TEST_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
     await closeBrowserQuietly(browser);
 }
 
+function assertExpectedRuntimeCapabilities(response) {
+    if (response?.status !== 'ok') {
+        throw new Error(`Attachment capability probe failed: ${JSON.stringify(response)}`);
+    }
+    const gemini = response.capabilities?.Gemini;
+    const doubao = response.capabilities?.Doubao;
+    const deepseek = response.capabilities?.DeepSeek;
+    const unprovenCdpModels = ['ChatGPT', 'Grok'];
+
+    if (gemini && (
+        gemini.status !== 'supported'
+        || gemini.method !== 'cdp_advanced'
+        || gemini.code !== 'attachment_cdp_available'
+    )) {
+        throw new Error(
+            'Attached extension runtime does not advertise Gemini as the first Advanced CDP attachment path. '
+            + 'Run `cmd /c npm.cmd run release:advanced`, restart the 9333 Advanced Chrome session, then retry.'
+        );
+    }
+
+    for (const model of unprovenCdpModels) {
+        const capability = response.capabilities?.[model];
+        if (capability && (capability.status !== 'manual_required' || capability.method !== 'manual')) {
+            throw new Error(
+                `Attached extension runtime still advertises ${model} Advanced CDP attachments, but the path is not proven. `
+                + 'Run `cmd /c npm.cmd run release:advanced`, restart the 9333 Advanced Chrome session, then retry.'
+            );
+        }
+    }
+    if (doubao && (doubao.status !== 'manual_required' || doubao.method !== 'manual')) {
+        throw new Error(
+            'Attached extension runtime still advertises Doubao automated attachments. '
+            + 'Run `cmd /c npm.cmd run release:advanced`, restart the 9333 Advanced Chrome session, then retry.'
+        );
+    }
+    if (deepseek && (deepseek.status !== 'manual_required' || deepseek.method !== 'manual')) {
+        throw new Error(
+            'Attached extension runtime still advertises DeepSeek Advanced CDP attachments. '
+            + 'Run `cmd /c npm.cmd run release:advanced`, restart the 9333 Advanced Chrome session, then retry.'
+        );
+    }
+}
+
 function getLiveTargetUrl(model) {
     switch (model) {
         case 'ChatGPT': return 'https://chatgpt.com/';
         case 'Grok': return 'https://grok.com/';
-        case 'Gemini': return 'https://gemini.google.com/';
+        case 'Gemini': return 'https://gemini.google.com/app';
         case 'Doubao': return 'https://www.doubao.com/chat/';
         case 'DeepSeek': return 'https://chat.deepseek.com/';
         default: throw new Error(`Unsupported model: ${model}`);

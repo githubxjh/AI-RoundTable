@@ -96,7 +96,7 @@ function createHarness() {
         filename: 'adapter_base.js'
     });
 
-    return { AdapterBase: context.window.__TestAdapterBase };
+    return { AdapterBase: context.window.__TestAdapterBase, document: context.document };
 }
 
 runTest('preuploaded CDP attachments wait for readiness without reassigning files', async () => {
@@ -140,6 +140,133 @@ runTest('preuploaded CDP attachments wait for readiness without reassigning file
     assert.equal(adapter.attachFilesCalled, false);
     assert.equal(adapter.waitedCount, 2);
     assert.equal(adapter.handledText, 'hello');
+});
+
+runTest('selector-based attachment wait accepts a visible generic file preview', async () => {
+    const { AdapterBase } = createHarness();
+    const inputEl = { multiple: true, files: { length: 1 } };
+
+    class TestAdapter extends AdapterBase {
+        constructor() {
+            super('TestModel');
+            this._attachmentReadyTimeoutMs = 200;
+        }
+
+        startObservation() {}
+
+        getAttachmentBusySelectors() {
+            return ['[data-busy]'];
+        }
+
+        getAttachmentReadySelectors() {
+            return ['[data-missing-ready]'];
+        }
+
+        findSendButton() {
+            return null;
+        }
+
+        _detectGenericFilePreview() {
+            return true;
+        }
+    }
+
+    const adapter = new TestAdapter();
+    await adapter.waitAttachmentReady(inputEl, [null]);
+});
+
+runTest('preuploaded CDP attachments can be ready from visible previews without a retained file input', async () => {
+    const { AdapterBase, document } = createHarness();
+    let queriedSelector = '';
+    const preview = {
+        tagName: 'DIV',
+        closest() {
+            return null;
+        },
+        getClientRects() {
+            return [{}];
+        }
+    };
+    class TestAdapter extends AdapterBase {
+        constructor() {
+            super('TestModel');
+            this._attachmentReadyTimeoutMs = 200;
+        }
+        async findAttachmentInput() {
+            return null;
+        }
+        findSendButton() {
+            return {
+                disabled: false,
+                getAttribute() {
+                    return '';
+                },
+                getClientRects() {
+                    return [{}];
+                }
+            };
+        }
+    }
+
+    document.querySelectorAll = (selector) => {
+        queriedSelector = selector;
+        return selector.includes('file-preview') ? [preview] : [];
+    };
+    document.defaultView = {
+        getComputedStyle() {
+            return { display: 'block', visibility: 'visible', opacity: '1' };
+        }
+    };
+
+    const adapter = new TestAdapter();
+    await adapter.waitForPreuploadedAttachments(1);
+
+    assert.match(queriedSelector, /file-preview/);
+});
+
+runTest('preuploaded CDP attachments still fail when no input or preview exists', async () => {
+    const { AdapterBase, document } = createHarness();
+    class TestAdapter extends AdapterBase {
+        constructor() {
+            super('TestModel');
+            this._attachmentReadyTimeoutMs = 80;
+        }
+        async findAttachmentInput() {
+            return null;
+        }
+    }
+
+    document.querySelectorAll = () => [];
+
+    const adapter = new TestAdapter();
+    await assert.rejects(
+        () => adapter.waitForPreuploadedAttachments(1),
+        /File input was not found after CDP attachment upload/
+    );
+});
+
+runTest('attachment send confirmation treats an empty composer as submitted', async () => {
+    const { AdapterBase } = createHarness();
+
+    class TestAdapter extends AdapterBase {
+        constructor() {
+            super('TestModel');
+            this._hasAttachments = true;
+        }
+
+        startObservation() {}
+    }
+
+    const adapter = new TestAdapter();
+    const inputEl = {
+        textContent: '',
+        innerText: '',
+        getAttribute() {
+            return '';
+        }
+    };
+
+    assert.equal(adapter.hasInputBeenSubmitted(inputEl, ''), true);
 });
 
 let passed = 0;

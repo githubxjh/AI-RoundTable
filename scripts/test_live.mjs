@@ -7,6 +7,7 @@ import {
 import {
     attachContextDiagnostics,
     assertProfileReady,
+    assertAttachedChromeTarget,
     clearExtensionStorage,
     closeBrowserQuietly,
     connectToChromeOverCdp,
@@ -69,6 +70,11 @@ try {
     browser = attached.browser;
     const context = attached.context;
     attachContextDiagnostics(context, { logger });
+    await assertAttachedChromeTarget(context, {
+        expectedUserDataDir: paths.automationUserDataDir,
+        expectedCdpPort: paths.cdpPort,
+        logger
+    });
 
     const extensionId = await resolveAttachedExtensionId({
         context,

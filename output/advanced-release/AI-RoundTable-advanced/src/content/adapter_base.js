@@ -148,6 +148,7 @@ class AdapterBase {
         }
         return {
             status: 'attachment_input_ready',
+            inputMode: 'file_input',
             inputSelector: this.getAttachmentInputSelector(),
             inputVisible: this.isElementVisible(inputEl),
             multiple: Boolean(inputEl.multiple)
@@ -158,6 +159,9 @@ class AdapterBase {
         const expectedCount = Math.max(1, Number(count || 0));
         const inputEl = await this.findAttachmentInput();
         if (!inputEl) {
+            if (await this.waitForPreuploadedAttachmentPreview(expectedCount)) {
+                return;
+            }
             throw this.createAttachmentError(
                 'attachment_input_not_found',
                 'File input was not found after CDP attachment upload'
@@ -165,6 +169,25 @@ class AdapterBase {
         }
         const placeholders = Array.from({ length: expectedCount }, () => null);
         await this.waitAttachmentReady(inputEl, placeholders);
+    }
+
+    async waitForPreuploadedAttachmentPreview(_expectedCount = 1) {
+        const deadline = Date.now() + this._attachmentReadyTimeoutMs;
+        const busySelectors = this.getAttachmentBusySelectors();
+
+        while (Date.now() < deadline) {
+            const busy = busySelectors.length > 0 && this.hasAnySelector(busySelectors);
+            if (!busy && this._detectGenericFilePreview()) {
+                const sendBtn = this.findSendButton();
+                if (!sendBtn || this.isSendButtonAvailable(sendBtn)) {
+                    await this.delay(300);
+                    return true;
+                }
+            }
+            await this.delay(200);
+        }
+
+        return false;
     }
 
     async attachFiles(attachments) {
@@ -336,8 +359,9 @@ class AdapterBase {
 
             const busy = this.hasAnySelector(busySelectors);
             const ready = readySelectors.length === 0 ? true : this.hasAnySelector(readySelectors);
+            const genericReady = this._detectGenericFilePreview();
 
-            if (!busy && ready) {
+            if (!busy && (ready || genericReady)) {
                 const sendBtn = this.findSendButton();
                 if (sendBtn && !this.isSendButtonAvailable(sendBtn)) {
                     continue;
@@ -348,9 +372,13 @@ class AdapterBase {
             await this.delay(200);
         }
 
+        const finalAccepted = Number(inputEl?.files?.length || 0);
+        const finalReady = readySelectors.length === 0 ? true : this.hasAnySelector(readySelectors);
+        const finalBusy = this.hasAnySelector(busySelectors);
+        const finalGenericReady = this._detectGenericFilePreview();
         throw this.createAttachmentError(
             'attachment_upload_failed',
-            'Attachment upload did not become ready in time'
+            `Attachment upload did not become ready in time (files=${finalAccepted}/${expected}, ready=${finalReady}, generic=${finalGenericReady}, busy=${finalBusy})`
         );
     }
 
@@ -516,10 +544,11 @@ class AdapterBase {
         if (!inputEl) return false;
 
         const expected = this.normalizeComparableText(expectedText);
-        if (!expected) return false;
+        if (!expected && !this._hasAttachments) return false;
 
         const current = this.normalizeComparableText(this.readInputText(inputEl));
         if (!current) return true;
+        if (!expected) return false;
         if (current === expected) return false;
         if (current.length <= Math.max(4, Math.floor(expected.length * 0.35))) return true;
         if (!current.includes(expected) && !expected.includes(current)) return true;

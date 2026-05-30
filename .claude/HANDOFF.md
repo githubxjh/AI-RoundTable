@@ -2,68 +2,47 @@
 
 ## TL;DR
 
-User approved a docs/process cleanup after the attachment group-broadcast debugging loop failed to converge quickly enough. This pass is documentation-only: improve test/debug workflow and handoff rules, but do not continue live browser testing or attachment feature fixes.
+Gemini single-model/single-file Advanced attachment upload is now live-proven. Do not generalize this to ChatGPT, Grok, Doubao, or DeepSeek yet. The proven Gemini path uses CDP file chooser interception, not a persistent `input[type="file"]`. Daily Chrome remains unproven because that browser is not CDP-controllable; use the in-panel Gemini attachment diagnostics if the user's daily Chrome still disagrees with the 9333 proof.
 
 ## Current Stop Line
 
-> 可以，改吧，加油
+Latest user direction: continue fixing the attachment issue, research the method first, and keep git staging ready for frequent iteration.
+
+## Debugging Packet
+
+- Symptom: attachment group broadcast could send fallback text but did not prove file upload.
+- Success criteria: `attachmentResults[]` must contain `attachmentStatus=supported`, `method=cdp_advanced`, and `code=attachment_cdp_uploaded`.
+- Browser line: Advanced local only, CDP `9333`, profile `tools/browser-profile/chrome-user-data-advanced`, package `output/advanced-release/AI-RoundTable-advanced`.
+- Minimal repro used: Gemini only, one tiny PNG fixture, one normal prompt.
+- Root cause: Gemini currently opens a native file chooser from its upload menu and does not leave a stable `input[type="file"]` in the DOM for `DOM.querySelector`.
+- Implemented fix: Gemini returns `inputMode=file_chooser`; background uses `Page.setInterceptFileChooserDialog` + `Page.fileChooserOpened.backendNodeId` + `DOM.setFileInputFiles`; preuploaded readiness can be detected from visible file previews.
+- Follow-up root cause from daily Chrome screenshot: some Gemini UI variants leave the upload menu open with a visible `上传文件` menu item that has text but no matching aria label/hidden selector. The CDP trigger now also targets visible menu items by text (`上传文件` / Upload file) and excludes Drive/cloud entries.
+- Follow-up root cause from daily Chrome diagnostics JSON: Gemini history/conversation action buttons can contain old prompt text with words like `附件` / `PDF` / `上传`, so the adapter could click a historical `更多选项` (`more_vert`, `gem-conversation-actions-menu-button`) instead of the composer upload menu. The Gemini trigger now excludes those history action menus and prioritizes the visible composer `上传和工具` / plus button.
+- Follow-up root cause from the 9333 PDF run: Gemini had accepted the PDF and started responding, but the adapter missed Gemini's newer visible busy response panel (`aria-busy="true"`) and misclassified the send as `send_not_confirmed`. The Gemini generation detector now treats visible busy response panels as send confirmation.
+- Daily Chrome diagnostic path: the side panel now has `诊断 Gemini 附件`, which asks the extension to sample upload-related DOM in the current Gemini tab and copy a privacy-limited JSON payload. It is intended for daily Chrome pages where Codex cannot attach directly.
+- Safety guard: CDP injection accepts only file paths returned by the current `stageAdvancedAttachments()` call via `allowedFilePaths`; it must not accept arbitrary local paths.
 
 ## Working Tree
 
-Docs changed in this continuation:
+Relevant source/test files in the current attachment repair:
 
-- `.claude/HANDOFF.md`
-- `.claude/STATUS.md`
-- `AGENTS.md`
-- `CLAUDE.md`
-- `TESTING.md`
-- `docs/agent-continuity.md`
-- `docs/debugging-convergence.md`
-- `docs/self-iteration.md`
-
-Git staging scope for this continuation:
-
-- Stage only the process/documentation files above.
-- Do not stage the existing source/test/generated-output repair changes unless the user explicitly expands scope.
-- Do not stage untracked `tools/`.
-
-Small code/test edits made immediately before the stop line:
-
-- `scripts/lib/playwright_env.mjs`: added `DEFAULT_ADVANCED_CDP_PORT = 9333` and optional `defaultCdpPort`.
-- `scripts/launch_advanced_chrome.mjs`: uses Advanced default CDP port and prints the Advanced profile root.
-- `tests/playwright_env.test.mjs`: covers Advanced default port.
-- `tests/attachment_live_script.test.mjs`: asserts the Advanced launcher uses the dedicated default port.
-
-Existing modified files from the earlier repair thread, not fully reviewed in this continuation:
-
-- `package.json`
-- `scripts/launch_real_chrome.mjs`
-- `scripts/lib/chrome_attach.mjs`
-- `scripts/lib/playwright_env.mjs`
-- `scripts/lib/playwright_runtime.mjs`
-- `scripts/test_attachment.mjs`
-- `scripts/test_live.mjs`
 - `src/background/advanced_attachment_service.mjs`
+- `src/background/gemini_attachment_diagnostics.mjs`
+- `src/background/model_tab_selection.mjs`
 - `src/background/service_worker.js`
 - `src/content/adapter_base.js`
 - `src/content/adapter_gemini.js`
-- `src/content/adapter_gpt.js`
-- `src/content/adapter_grok.js`
-- `src/utils/attachment_capabilities.mjs`
-- multiple tests under `tests/`
-- generated Advanced output under `output/advanced-release/`
-
-New files from the earlier repair thread:
-
-- `scripts/launch_advanced_chrome.mjs`
-- `scripts/test_group_broadcast.mjs`
-- `tests/attachment_live_script.test.mjs`
+- `src/sidepanel/panel.html`
+- `src/sidepanel/panel.js`
+- `tests/advanced_attachment_service.test.mjs`
+- `tests/adapter_preuploaded_attachment.test.mjs`
+- `tests/gemini_attachment_diagnostics.test.mjs`
 - `tests/gemini_adapter.test.mjs`
-- `tests/grok_adapter.test.mjs`
+- `tests/attachment_live_script.test.mjs`
+- `output/advanced-release/AI-RoundTable-advanced/...`
+- `output/advanced-release/release-report.json`
 
-Unknown/unowned:
-
-- `tools/` is untracked in `git status`. Do not delete it unless the user explicitly asks.
+Other pre-existing modified files are still in the worktree. Before staging, use `git status --short` and `git diff -- <files>`; stage only task-related files. Do not stage untracked `tools/`.
 
 ## Browser Boundary
 
@@ -74,69 +53,55 @@ Correct AI-RoundTable Advanced live line:
 - extension package: `output/advanced-release/AI-RoundTable-advanced`
 - launcher: `cmd /c npm.cmd run test:chrome:launch:advanced`
 
-Normal attach/live text line:
-
-- profile: `tools/browser-profile/chrome-user-data`
-- launcher: `cmd /c npm.cmd run test:chrome:launch`
-
-Do not touch:
-
-- Port `9222` if it belongs to `D:\丹纳赫实施资料上传\.chrome-upload-profile`.
-- Any Chrome process unless its command line clearly contains both the expected AI-RoundTable profile and the expected port.
-
-Before any live claim, verify `chrome://version` or the process command line.
+Do not touch port `9222`; it belongs to the Danaher upload project in this machine context.
 
 ## Verified Evidence
 
-Evidence inherited from the prior repair thread, not rerun after the stop line:
+Fresh verification from this continuation:
 
-- `node tests\gemini_adapter.test.mjs` passed.
-- `node tests\attachment_live_script.test.mjs` passed.
-- `node tests\playwright_env.test.mjs` passed.
-- `node tests\attachment_capabilities.test.mjs` passed.
-- `cmd /c npm.cmd run test:live -- Gemini` passed on `9333`.
-- `cmd /c npm.cmd run test:live:group` returned all five models in `sentModels`.
-- Group evidence: `output/playwright/broadcast-live/summary.json` and `output/playwright/broadcast-live/broadcast.log`.
-- Attachment evidence: `output/playwright/attachment-test/attachment.log`.
+- `node tests\advanced_attachment_service.test.mjs` passed, 10/10.
+- `node tests\adapter_preuploaded_attachment.test.mjs` passed, 5/5.
+- `node tests\gemini_adapter.test.mjs` passed, 6/6.
+- `node tests\attachment_live_script.test.mjs` passed, 11/11.
+- `node tests\gemini_attachment_diagnostics.test.mjs` passed, 5/5.
+- After the daily Chrome screenshot fix, `node tests\gemini_adapter.test.mjs`, `node tests\adapter_preuploaded_attachment.test.mjs`, `node tests\attachment_live_script.test.mjs`, and `node tests\manifest_models.test.mjs` passed.
+- `cmd /c npm.cmd run release:advanced` passed.
+- `cmd /c npm.cmd run test:chrome:launch:advanced` verified the running Advanced runtime on `9333`.
+- `node scripts\test_attachment.mjs Gemini --file "C:\Users\xiepro\Desktop\附件5.pdf"` passed against `https://gemini.google.com/app`. Evidence: `output/playwright/attachment-test/attachment.log`.
+- In the latest live Gemini result, `attachmentResults[0]` was `supported / cdp_advanced / attachment_cdp_uploaded`; timestamp in log: `2026-05-30T01:10:16.988Z`.
+- `cmd /c npm.cmd run test:helpers` passed.
+- After the daily Chrome diagnostics JSON fix, `node tests\gemini_adapter.test.mjs` passed 6/6, `node tests\gemini_attachment_diagnostics.test.mjs` passed 5/5, and `cmd /c npm.cmd run test:helpers` passed.
+- `cmd /c npm.cmd run release:advanced` passed after the diagnostics JSON fix and rebuilt `output/advanced-release/AI-RoundTable-advanced`.
+- `node scripts\test_attachment.mjs Gemini --file "C:\Users\xiepro\Desktop\附件5.pdf"` passed again on Advanced CDP `9333`; evidence: `output/playwright/attachment-test/attachment.log`.
+- In that latest live Gemini result, `attachmentResults[0]` was `supported / cdp_advanced / attachment_cdp_uploaded`; timestamp in log: `2026-05-30T01:47:06.933Z`.
 
-Not rerun after the documentation pivot:
+External method check used:
 
-- `cmd /c npm.cmd run test:helpers`
-- `cmd /c npm.cmd run test:live:group`
-- `node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek`
+- Playwright file chooser docs support the dynamic file chooser approach.
+- Chrome DevTools Protocol supports `Page.setInterceptFileChooserDialog`, `Page.fileChooserOpened`, and `DOM.setFileInputFiles`.
+
+Cheap Council:
+
+- Call id: `call_20260529_152239_d4ef3487`.
+- Parser failed, but raw review usefully flagged path allowlist and timeout/cleanup risks; feedback recorded as partial.
 
 ## Not Proven
 
-- Attachment auto-upload is not proven for ChatGPT, Gemini, Grok, Doubao, or DeepSeek.
-- Current conservative runtime reports attachments as `manual_required` or text fallback/degraded.
-- A model text reply after an attachment broadcast is not proof that the file uploaded.
-- Attachment success requires `attachmentResults[].attachmentStatus === "supported"`, `method === "cdp_advanced"`, and `code === "attachment_cdp_uploaded"`.
-- The newest small Advanced-port code/test edits have not been verified with a fresh test run.
+- Five-model attachment group broadcast is not proven.
+- ChatGPT, Grok, Doubao, and DeepSeek automated attachment upload remain unproven and should stay conservative/manual unless each gets its own minimal live proof.
+- The user's daily Chrome page is not yet proven. Current machine evidence shows daily Chrome has no `--remote-debugging-port`; Codex cannot inspect that live DOM directly without either a new debug-enabled Chrome launch or the in-panel diagnostic JSON.
+- A model text reply is still not proof of upload.
 
 ## Next Safe Steps
 
-If the user wants only documentation cleanup:
-
-1. Read `docs/agent-continuity.md`, `docs/debugging-convergence.md`, `AGENTS.md`, `TESTING.md`, and `docs/self-iteration.md`.
-2. Check whether the debugging packet / convergence gate needs more detail for the next repair.
-3. Run no live browser tests unless the user explicitly resumes the repair/testing work.
-
-If the user resumes the original Gemini/group/attachment repair:
-
-1. Run `cmd /c npm.cmd run test:helpers`.
-2. Regenerate Advanced package with `cmd /c npm.cmd run release:advanced`.
-3. Start the Advanced browser with `cmd /c npm.cmd run test:chrome:launch:advanced`.
-4. Run `cmd /c npm.cmd run test:live:group`.
-5. Run `node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek`.
-6. Report attachment results strictly from `attachmentResults[]`.
+1. If the user tests in daily Chrome, ask them to reload the unpacked extension in `chrome://extensions`, refresh/open a fresh `https://gemini.google.com/app` tab, keep it active, and test Gemini only.
+2. If daily Chrome still fails, use the side-panel `诊断 Gemini 附件` button and inspect the copied JSON before changing selectors again.
+3. If expanding beyond Gemini, follow the matrix in `docs/debugging-convergence.md`: single model, single file first; then dual model; then five-model matrix.
+4. Do not run `node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek` as proof until each non-Gemini model has a documented capability path or expected manual fallback.
 
 ## Do Not Do
 
-- Do not keep fixing functionality while the user has asked to pause and improve handoff norms.
-- Do not start another attachment repair without first writing a `Debugging Packet` from `docs/debugging-convergence.md`.
-- Do not claim attachment success from text fallback.
+- Do not claim attachment success from fallback text.
+- Do not enable Advanced CDP capabilities for other models without model-specific live evidence.
 - Do not use or kill the `9222` Danaher Chrome.
-- Do not rely on the in-app browser at `http://127.0.0.1:9333/` as proof of the real Chrome session.
-- Do not assume generated `output/advanced-release/` files are current unless `release:advanced` was just run.
-- Do not omit changed generated files from the final status; they are part of the current dirty tree.
-- Do not commit, pull, push, or rollback without first reporting staged/unstaged state and getting explicit user intent.
+- Do not commit, pull, push, or rollback without explicit user confirmation.

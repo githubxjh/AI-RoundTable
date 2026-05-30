@@ -13,9 +13,18 @@ import {
 } from '../utils/attachment_capabilities.mjs';
 import {
     createDeferredDownloadCleanup,
+    setFileInputFilesViaCdpFileChooser,
     setFileInputFilesWithCdp,
     stageAdvancedAttachments
 } from './advanced_attachment_service.mjs';
+import {
+    createEmptyModelTabs,
+    selectModelTabs
+} from './model_tab_selection.mjs';
+import {
+    collectGeminiUploadDiagnosticsFromPage,
+    summarizeGeminiUploadDiagnostics
+} from './gemini_attachment_diagnostics.mjs';
 
 console.log('AI RoundTable Background Service Worker Loaded');
 
@@ -23,13 +32,7 @@ const MODEL_NAMES = ['ChatGPT', 'Grok', 'Gemini', 'Doubao', 'DeepSeek'];
 const DISABLED_MODEL_NAMES = new Set(['Claude']);
 const TERMINAL_EVAL_STATUSES = new Set(['done', 'parse_failed', 'timeout']);
 
-let activeTabs = {
-    ChatGPT: null,
-    Grok: null,
-    Gemini: null,
-    Doubao: null,
-    DeepSeek: null
-};
+let activeTabs = createEmptyModelTabs();
 
 const MODEL_URLS = {
     ChatGPT: 'chatgpt.com',
@@ -258,6 +261,11 @@ async function handleMessage(message, sender) {
             return broadcastMessage(message.text, message.targets, message.attachments, {
                 attachmentMode: message.attachmentMode
             });
+        case 'ATTACHMENT_CAPABILITIES':
+            return inspectAttachmentCapabilities(message);
+        case 'GEMINI_ATTACHMENT_DIAGNOSTICS':
+            await discoverTabs();
+            return collectGeminiAttachmentDiagnostics();
         case 'ROUTE':
             await discoverTabs();
             return routeMessage(message);
@@ -360,24 +368,40 @@ async function handleAnalysisProviderTest(message) {
 
 async function discoverTabs() {
     const tabs = await chrome.tabs.query({});
+    let lastFocusedWindowId = 0;
 
-    activeTabs = {
-        ChatGPT: null,
-        Grok: null,
-        Gemini: null,
-        Doubao: null,
-        DeepSeek: null
-    };
+    try {
+        const lastFocusedWindow = await chrome.windows.getLastFocused();
+        lastFocusedWindowId = Number(lastFocusedWindow?.id || 0);
+    } catch (error) {
+        console.warn('Unable to read last focused Chrome window for model tab selection:', error);
+    }
 
-    tabs.forEach((tab) => {
-        if (!tab.url) return;
+    activeTabs = selectModelTabs(tabs, { lastFocusedWindowId });
+}
 
-        if (tab.url.includes(MODEL_URLS.ChatGPT)) activeTabs.ChatGPT = tab.id;
-        else if (tab.url.includes('x.com/i/grok') || tab.url.includes('grok.com')) activeTabs.Grok = tab.id;
-        else if (tab.url.includes('gemini.google.com') || tab.url.includes('aistudio.google.com')) activeTabs.Gemini = tab.id;
-        else if (tab.url.includes('doubao.com/chat') || tab.url.includes('flow-chat.gf.bytedance.net/chat')) activeTabs.Doubao = tab.id;
-        else if (tab.url.includes('chat.deepseek.com')) activeTabs.DeepSeek = tab.id;
+async function collectGeminiAttachmentDiagnostics() {
+    const tabId = activeTabs.Gemini;
+    if (!tabId) {
+        return {
+            status: 'error',
+            code: 'gemini_tab_not_found',
+            message: 'No Gemini tab was found in the last focused Chrome window'
+        };
+    }
+
+    const [result] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: collectGeminiUploadDiagnosticsFromPage
     });
+    const diagnostics = result?.result || {};
+    return {
+        status: diagnostics?.status === 'ok' ? 'ok' : 'error',
+        model: 'Gemini',
+        tabId,
+        summary: summarizeGeminiUploadDiagnostics(diagnostics),
+        diagnostics
+    };
 }
 
 async function broadcastMessage(text, targets, attachments = [], options = {}) {
@@ -488,7 +512,18 @@ async function broadcastMessage(text, targets, attachments = [], options = {}) {
                     advancedStage = await advancedStagePromise;
                     advancedDownloadIds = advancedStage.downloadIds;
                     const prepare = await prepareAttachmentInputForCdp(tabId, model);
-                    await setFileInputFilesWithCdp(tabId, prepare.inputSelector, advancedStage.filePaths, chrome);
+                    if (prepare.inputMode === 'file_chooser') {
+                        await setFileInputFilesViaCdpFileChooser(tabId, advancedStage.filePaths, {
+                            triggerExpression: prepare.triggerExpression,
+                            downloadRoot: advancedStage.downloadRoot,
+                            allowedFilePaths: advancedStage.filePaths
+                        }, chrome);
+                    } else {
+                        await setFileInputFilesWithCdp(tabId, prepare.inputSelector, advancedStage.filePaths, {
+                            downloadRoot: advancedStage.downloadRoot,
+                            allowedFilePaths: advancedStage.filePaths
+                        }, chrome);
+                    }
                     const response = await sendMessageToTab(tabId, {
                         type: 'INPUT_PROMPT',
                         text,
@@ -541,6 +576,19 @@ async function broadcastMessage(text, targets, attachments = [], options = {}) {
                         await advancedCleanup(advancedStage.downloadIds).catch((cleanupError) => {
                             console.warn('Advanced attachment cleanup after failure failed:', cleanupError);
                         });
+                    }
+                    const errorCode = String(error?.code || '');
+                    if (errorCode === 'attachment_quota_blocked') {
+                        const record = buildAttachmentRecord(model, {
+                            status: ATTACHMENT_STATUS.blocked,
+                            method: ATTACHMENT_METHODS.cdpAdvanced,
+                            code: errorCode,
+                            reason: error?.message || 'Attachment upload is blocked by site/account quota'
+                        });
+                        skipped.push(record);
+                        attachmentResults.push(record);
+                        results.push({ model, phase: 'cdp_advanced', error: record.reason, ...record });
+                        continue;
                     }
                     const record = buildAttachmentRecord(model, {
                         status: ATTACHMENT_STATUS.textFallback,
@@ -703,6 +751,39 @@ function shouldUseAdvancedAttachments(options = {}) {
     return String(options?.attachmentMode || '').trim().toLowerCase() !== 'lite';
 }
 
+function inspectAttachmentCapabilities(message = {}) {
+    const normalizedAttachmentsResult = normalizeBroadcastAttachments(message.attachments || []);
+    if (!normalizedAttachmentsResult.ok) {
+        return {
+            status: 'error',
+            code: 'invalid_attachments',
+            message: normalizedAttachmentsResult.message
+        };
+    }
+
+    const requestedTargets = Array.isArray(message.targets) && message.targets.length > 0
+        ? message.targets
+        : MODEL_NAMES;
+    const targetModels = normalizeEnabledModels(requestedTargets);
+    const advanced = shouldUseAdvancedAttachments({
+        attachmentMode: message.attachmentMode
+    });
+    const capabilities = {};
+    for (const model of targetModels) {
+        capabilities[model] = getAttachmentCapability(
+            model,
+            normalizedAttachmentsResult.attachments,
+            { advanced }
+        );
+    }
+
+    return {
+        status: 'ok',
+        advanced,
+        capabilities
+    };
+}
+
 function isAdvancedAttachmentBuild() {
     const manifest = chrome.runtime.getManifest?.() || {};
     const permissions = new Set(Array.isArray(manifest.permissions) ? manifest.permissions : []);
@@ -774,7 +855,9 @@ async function prepareAttachmentInputForCdp(tabId, model) {
         throw new Error(response?.message || response?.error || 'Attachment input preparation failed');
     }
     return {
-        inputSelector: response.inputSelector || 'input[type="file"]'
+        inputMode: response.inputMode || 'file_input',
+        inputSelector: response.inputSelector || 'input[type="file"]',
+        triggerExpression: response.triggerExpression || ''
     };
 }
 

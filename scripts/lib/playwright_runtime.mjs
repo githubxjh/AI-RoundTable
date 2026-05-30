@@ -6,6 +6,7 @@ import {
     buildExtensionLaunchArgs,
     ensureDir,
     getExtensionPageUrl,
+    normalizeWindowsPath,
     normalizeProfileRelativePath
 } from './playwright_env.mjs';
 import {
@@ -135,6 +136,106 @@ export async function connectToChromeOverCdp({
     };
 }
 
+export async function captureChromeVersionInfo(context) {
+    if (!context?.newPage) {
+        throw new Error('A Playwright browser context is required to inspect chrome://version.');
+    }
+
+    const page = await context.newPage();
+    try {
+        await page.goto('chrome://version/', {
+            waitUntil: 'domcontentloaded',
+            timeout: 15000
+        });
+        const text = await page.evaluate(() => document.body?.innerText || '');
+        return parseChromeVersionText(text);
+    } finally {
+        await page.close().catch(() => {});
+    }
+}
+
+export function parseChromeVersionText(text = '') {
+    const rawText = String(text || '');
+    const fields = {};
+    for (const line of rawText.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const [label, ...rest] = trimmed.split(/\t+/);
+        if (!label || rest.length === 0) continue;
+        fields[label.trim()] = rest.join('\t').trim();
+    }
+
+    return {
+        rawText,
+        commandLine: fields['命令行'] || fields['Command Line'] || '',
+        executablePath: fields['可执行文件路径'] || fields['Executable Path'] || '',
+        profilePath: fields['个人资料路径'] || fields['Profile Path'] || ''
+    };
+}
+
+export function validateAttachedChromeTarget(versionInfo = {}, {
+    expectedUserDataDir = '',
+    expectedCdpPort = ''
+} = {}) {
+    const errors = [];
+    const commandLine = String(versionInfo.commandLine || '');
+    const profilePath = String(versionInfo.profilePath || '');
+    const normalizedCommand = commandLine.replaceAll('"', '').replaceAll('\\', '/').toLowerCase();
+
+    if (expectedCdpPort) {
+        const expectedPort = String(expectedCdpPort).trim();
+        if (!normalizedCommand.includes(`--remote-debugging-port=${expectedPort}`)) {
+            errors.push(`Expected --remote-debugging-port=${expectedPort}, got command line: ${commandLine || '(empty)'}`);
+        }
+    }
+
+    if (expectedUserDataDir) {
+        const expectedProfileRoot = normalizeWindowsPath(expectedUserDataDir);
+        const normalizedProfilePath = profilePath ? normalizeWindowsPath(profilePath) : '';
+        const commandMatchesProfile = normalizedCommand.includes(`--user-data-dir=${expectedProfileRoot}`);
+        const profilePathMatches = normalizedProfilePath === expectedProfileRoot
+            || normalizedProfilePath.startsWith(`${expectedProfileRoot}/`);
+
+        if (!commandMatchesProfile && !profilePathMatches) {
+            errors.push(
+                `Expected Chrome user-data-dir under ${expectedUserDataDir}, got profile path ${profilePath || '(empty)'}`
+            );
+        }
+    }
+
+    return {
+        ok: errors.length === 0,
+        errors,
+        commandLine,
+        profilePath
+    };
+}
+
+export async function assertAttachedChromeTarget(context, {
+    expectedUserDataDir = '',
+    expectedCdpPort = '',
+    logger = null
+} = {}) {
+    const info = await captureChromeVersionInfo(context);
+    const validation = validateAttachedChromeTarget(info, {
+        expectedUserDataDir,
+        expectedCdpPort
+    });
+
+    logger?.log?.(
+        `attach:chrome-target profile=${info.profilePath || '(unknown)'} command=${info.commandLine || '(unknown)'}`
+    );
+
+    if (!validation.ok) {
+        throw new Error([
+            'Connected CDP browser does not match the expected AI-RoundTable attach profile.',
+            ...validation.errors
+        ].join('\n'));
+    }
+
+    return info;
+}
+
 export async function resolveAttachedExtensionId({
     context,
     repoRoot,
@@ -226,13 +327,159 @@ export function attachContextDiagnostics(context, {
 export async function openExtensionPanel(context, extensionId, {
     logger = null
 } = {}) {
+    const panelUrl = getExtensionPageUrl(extensionId);
+    const existingPage = context.pages().find((page) => String(page.url() || '').trim() === panelUrl);
+    if (existingPage) {
+        await existingPage.bringToFront?.().catch?.(() => {});
+        return existingPage;
+    }
+
     const page = await context.newPage();
     attachPageDiagnostics(page, {
         label: 'panel',
         logger
     });
-    await page.goto(getExtensionPageUrl(extensionId), { waitUntil: 'domcontentloaded' });
+    await page.goto(panelUrl, { waitUntil: 'domcontentloaded' });
     return page;
+}
+
+export async function ensureExtensionDeveloperRuntime(context, extensionId, {
+    logger = null,
+    timeoutMs = 15000,
+    intervalMs = 500
+} = {}) {
+    if (!context?.newPage) {
+        throw new Error('A Playwright browser context is required to inspect extension runtime state.');
+    }
+    const extensionPage = await context.newPage();
+    attachPageDiagnostics(extensionPage, {
+        label: 'extensions',
+        logger
+    });
+    try {
+        await extensionPage.goto(`chrome://extensions/?id=${extensionId}`, {
+            waitUntil: 'domcontentloaded',
+            timeout: timeoutMs
+        });
+        const result = await extensionPage.evaluate(async ({ extensionId: targetExtensionId, timeoutMs: waitMs, intervalMs: pollMs }) => {
+            if (!chrome.developerPrivate) {
+                return {
+                    ok: false,
+                    error: 'chrome.developerPrivate is unavailable on chrome://extensions.'
+                };
+            }
+
+            const profile = await chrome.developerPrivate.getProfileConfiguration();
+            if (profile?.isDeveloperModeControlledByPolicy) {
+                return {
+                    ok: false,
+                    error: 'Chrome developer mode is controlled by policy.'
+                };
+            }
+            if (!profile?.inDeveloperMode) {
+                await chrome.developerPrivate.updateProfileConfiguration({
+                    inDeveloperMode: true
+                });
+            }
+
+            await chrome.developerPrivate.reload(targetExtensionId);
+
+            const startedAt = Date.now();
+            let latest = null;
+            while (Date.now() - startedAt < waitMs) {
+                latest = await chrome.developerPrivate.getExtensionInfo(targetExtensionId);
+                if (latest?.state === 'ENABLED') {
+                    return {
+                        ok: true,
+                        state: latest.state,
+                        disableReasons: latest.disableReasons || {},
+                        manifestErrors: latest.manifestErrors || [],
+                        runtimeErrors: latest.runtimeErrors || [],
+                        views: latest.views || []
+                    };
+                }
+                await new Promise((resolve) => setTimeout(resolve, pollMs));
+            }
+
+            return {
+                ok: false,
+                state: latest?.state || 'unknown',
+                disableReasons: latest?.disableReasons || {},
+                manifestErrors: latest?.manifestErrors || [],
+                runtimeErrors: latest?.runtimeErrors || [],
+                views: latest?.views || [],
+                error: 'Extension did not become enabled after reload.'
+            };
+        }, {
+            extensionId,
+            timeoutMs,
+            intervalMs
+        });
+
+        if (!result?.ok) {
+            throw new Error(formatExtensionRuntimeStateError(extensionId, result));
+        }
+
+        logger?.log?.(`extension-runtime:enabled ${extensionId}`);
+        return result;
+    } finally {
+        await extensionPage.close().catch(() => {});
+    }
+}
+
+export async function reloadExtensionRuntime(context, extensionId, {
+    logger = null,
+    timeoutMs = 15000
+} = {}) {
+    const reloadPage = await context.newPage();
+    attachPageDiagnostics(reloadPage, {
+        label: 'extension-reload',
+        logger
+    });
+
+    const panelUrl = getExtensionPageUrl(extensionId);
+    const serviceWorkerPromise = context.waitForEvent('serviceworker', { timeout: timeoutMs })
+        .catch(() => null);
+
+    try {
+        await reloadPage.goto(panelUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+        await reloadPage.evaluate(() => {
+            chrome.runtime.reload();
+        });
+    } finally {
+        await reloadPage.close().catch(() => {});
+    }
+
+    let worker = await serviceWorkerPromise;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const candidates = context.serviceWorkers().filter((item) => {
+            const url = String(item.url() || '');
+            return url.startsWith(`chrome-extension://${extensionId}/`);
+        });
+        worker = candidates[0] || worker;
+        if (worker) {
+            logger?.log?.(`extension-reload:service-worker ${worker.url()}`);
+            return worker;
+        }
+
+        const panelPage = await openExtensionPanel(context, extensionId, { logger });
+        await waitForPanelReady(panelPage, {
+            timeoutMs: Math.max(1000, deadline - Date.now())
+        });
+        try {
+            await sendRuntimeMessageWithRetry(panelPage, { type: 'ROUND_LIST', limit: 1 }, {
+                timeoutMs: Math.max(1000, deadline - Date.now()),
+                intervalMs: 250
+            });
+            logger?.log?.('extension-reload:runtime-ping-ok');
+            return null;
+        } catch {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+    }
+
+    throw new Error(`Timed out waiting for extension runtime reload: ${extensionId}`);
 }
 
 export async function waitForPanelReady(page, {
@@ -384,7 +631,17 @@ export async function closeContextQuietly(context) {
 export async function closeBrowserQuietly(browser) {
     if (!browser) return;
     try {
-        await browser.close();
+        if (typeof browser.disconnect === 'function') {
+            browser.disconnect();
+            return;
+        }
+        if (typeof browser._connection?.close === 'function') {
+            if (typeof browser.close === 'function') {
+                await browser.close();
+            } else {
+                browser._connection.close();
+            }
+        }
     } catch (error) {
         console.warn('Failed to disconnect browser cleanly.', error);
     }
@@ -393,4 +650,20 @@ export async function closeBrowserQuietly(browser) {
 function defaultRuntimeRetryable(error) {
     const message = String(error?.message || error || '');
     return message.includes('Could not establish connection. Receiving end does not exist.');
+}
+
+function formatExtensionRuntimeStateError(extensionId, result = {}) {
+    const enabledReasons = Object.entries(result.disableReasons || {})
+        .filter(([, value]) => Boolean(value))
+        .map(([key]) => key);
+    const manifestErrors = (result.manifestErrors || []).map((item) => item?.message || String(item)).filter(Boolean);
+    const runtimeErrors = (result.runtimeErrors || []).map((item) => item?.message || String(item)).filter(Boolean);
+    return [
+        `Extension ${extensionId} is not enabled for runtime messaging.`,
+        `state=${result.state || 'unknown'}`,
+        enabledReasons.length ? `disableReasons=${enabledReasons.join(',')}` : 'disableReasons=(none)',
+        manifestErrors.length ? `manifestErrors=${manifestErrors.join(' | ')}` : 'manifestErrors=(none)',
+        runtimeErrors.length ? `runtimeErrors=${runtimeErrors.join(' | ')}` : 'runtimeErrors=(none)',
+        result.error || ''
+    ].filter(Boolean).join(' ');
 }
