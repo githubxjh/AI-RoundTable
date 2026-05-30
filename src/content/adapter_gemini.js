@@ -103,7 +103,6 @@ class GeminiAdapter extends AdapterBase {
     }
 
     async prepareAttachmentInput() {
-        await this.openAttachmentUIIfNeeded();
         const inputEl = await this.findAttachmentInput();
         if (inputEl) {
             return {
@@ -114,6 +113,8 @@ class GeminiAdapter extends AdapterBase {
                 multiple: Boolean(inputEl.multiple)
             };
         }
+        // Do not click Gemini's upload UI here: CDP file chooser interception is
+        // enabled only after this method returns the trigger expression.
         return {
             status: 'attachment_input_ready',
             inputMode: 'file_chooser',
@@ -186,23 +187,54 @@ class GeminiAdapter extends AdapterBase {
                 'button[aria-label*="Upload file"]',
                 '[role="menuitem"]',
                 '.mat-mdc-menu-item',
+                '.hidden-local-file-upload-button',
+                '.hidden-local-upload-button',
                 '.hidden-local-file-image-selector-button',
                 '[xapfileselectortrigger]'
             ].join(','))).map((node) => {
                 const target = node.closest?.('button, [role="button"], [role="menuitem"], .mat-mdc-menu-item, [xapfileselectortrigger]') || node;
+                const className = String(node?.className || '') + ' ' + String(target?.className || '');
                 const label = normalizeText([
                     labelFor(target),
                     labelFor(node)
                 ].join(' '));
-                const special = node.matches?.('.hidden-local-file-image-selector-button, [xapfileselectortrigger]')
-                    || target.matches?.('.hidden-local-file-image-selector-button, [xapfileselectortrigger]');
-                return { node, target, label, special, visible: visible(target), local: isLocalFileLabel(label) };
+                const special = node.matches?.('.hidden-local-file-upload-button, .hidden-local-upload-button, .hidden-local-file-image-selector-button, [xapfileselectortrigger]')
+                    || target.matches?.('.hidden-local-file-upload-button, .hidden-local-upload-button, .hidden-local-file-image-selector-button, [xapfileselectortrigger]');
+                return { node, target, label, className, special, visible: visible(target), local: isLocalFileLabel(label) };
             });
+            const localFileScore = (item) => {
+                if (!item) return 0;
+                const role = item.target?.getAttribute?.('role') || item.node?.getAttribute?.('role') || '';
+                if (item.visible && item.local && !item.special && role === 'menuitem') return 120;
+                if (item.visible && item.local && !item.special) return 110;
+                if (item.visible && item.local) return 100;
+                if (item.special && /hidden-local-file-upload-button|hidden-local-upload-button/.test(item.className)) return 60;
+                if (item.special && /hidden-local-file-image-selector-button/.test(item.className)) return 20;
+                if (item.special) return 30;
+                return 0;
+            };
+            const bestLocalFileButton = (includeHidden) => collectLocalFileButtons()
+                .map((item) => ({ ...item, score: localFileScore(item) }))
+                .filter((item) => item.score > 0 && (includeHidden || (item.visible && item.local)))
+                .sort((a, b) => b.score - a.score)[0]?.target || null;
             const visibleLocalFileButton = () => collectLocalFileButtons()
-                .find((item) => item.visible && item.local)?.target || null;
+                .map((item) => ({ ...item, score: localFileScore(item) }))
+                .filter((item) => item.visible && item.local && item.score > 0)
+                .sort((a, b) => b.score - a.score)[0]?.target || null;
             const hiddenLocalFileButton = () => collectLocalFileButtons()
-                .find((item) => item.special)?.target || null;
-            const findLocalFileButton = () => visibleLocalFileButton() || hiddenLocalFileButton();
+                .map((item) => ({ ...item, score: localFileScore(item) }))
+                .filter((item) => item.special && item.score > 0)
+                .sort((a, b) => b.score - a.score)[0]?.target || null;
+            const waitForVisibleLocalFileButton = async (timeoutMs = 3000) => {
+                const deadline = Date.now() + timeoutMs;
+                while (Date.now() < deadline) {
+                    const button = visibleLocalFileButton();
+                    if (button) return button;
+                    await sleep(100);
+                }
+                return null;
+            };
+            const findLocalFileButton = () => bestLocalFileButton(false) || hiddenLocalFileButton();
             const uploadDiagnostics = () => collectLocalFileButtons()
                 .slice(0, 12)
                 .map((item) => ({
@@ -246,12 +278,14 @@ class GeminiAdapter extends AdapterBase {
                 .filter((item) => item.score > 0)
                 .sort((a, b) => b.score - a.score)[0]?.target || null;
 
-            let uploader = findLocalFileButton();
+            let uploader = visibleLocalFileButton();
             if (!uploader) {
                 const menuButton = findUploadMenuButton();
                 clickTarget(menuButton);
-                await sleep(500);
-                uploader = findLocalFileButton();
+                uploader = await waitForVisibleLocalFileButton(3000);
+            }
+            if (!uploader) {
+                uploader = hiddenLocalFileButton();
             }
             if (!uploader) {
                 reject(new Error('Gemini local file uploader button was not found; candidates=' + JSON.stringify(uploadDiagnostics())));

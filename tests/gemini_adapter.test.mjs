@@ -286,16 +286,21 @@ runTest('gemini prepares a CDP file chooser trigger when no static file input ex
 
     const result = await adapter.prepareAttachmentInput();
 
-    assert.equal(opened, true);
+    assert.equal(opened, false);
     assert.equal(result.status, 'attachment_input_ready');
     assert.equal(result.inputMode, 'file_chooser');
     assert.match(result.triggerExpression, /local-images-files-uploader-button/);
     assert.match(result.triggerExpression, /xapfileselectortrigger/);
+    assert.match(result.triggerExpression, /hidden-local-file-upload-button/);
+    assert.match(result.triggerExpression, /hidden-local-upload-button/);
     assert.match(result.triggerExpression, /role="menuitem"/);
     assert.match(result.triggerExpression, /上传文件/);
     assert.match(result.triggerExpression, /Google Drive/);
     assert.match(result.triggerExpression, /visibleLocalFileButton/);
     assert.match(result.triggerExpression, /hiddenLocalFileButton/);
+    assert.match(result.triggerExpression, /let uploader = visibleLocalFileButton/);
+    assert.match(result.triggerExpression, /waitForVisibleLocalFileButton/);
+    assert.match(result.triggerExpression, /localFileScore/);
     assert.match(result.triggerExpression, /pointerdown/);
     assert.match(result.triggerExpression, /uploadMenuScore/);
     assert.match(result.triggerExpression, /gem-conversation-actions-menu-button/);

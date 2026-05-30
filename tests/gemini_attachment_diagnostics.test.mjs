@@ -43,6 +43,8 @@ function createNode({
         matches(selector) {
             if (fileInput && selector === 'input[type="file"]') return true;
             if (special && selector.includes('[xapfileselectortrigger]')) return true;
+            if (special && selector.includes('.hidden-local-file-upload-button')) return true;
+            if (special && selector.includes('.hidden-local-upload-button')) return true;
             if (special && selector.includes('.hidden-local-file-image-selector-button')) return true;
             return selector
                 .split(',')
@@ -95,7 +97,7 @@ runTest('collects visible Gemini local upload menu candidates without page text 
 
 runTest('summarizes hidden Gemini upload trigger when visible menu item is absent', () => {
     const hidden = createNode({
-        className: 'hidden-local-file-image-selector-button',
+        className: 'hidden-local-file-upload-button',
         visible: false,
         special: true
     });

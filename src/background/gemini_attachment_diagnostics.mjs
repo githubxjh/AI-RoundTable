@@ -42,6 +42,8 @@ export function collectGeminiUploadDiagnosticsFromPage() {
         'button[aria-label*="Attach"]',
         '[role="menuitem"]',
         '.mat-mdc-menu-item',
+        '.hidden-local-file-upload-button',
+        '.hidden-local-upload-button',
         '.hidden-local-file-image-selector-button',
         '[xapfileselectortrigger]',
         'mat-icon[data-mat-icon-name="add"]',
@@ -58,8 +60,8 @@ export function collectGeminiUploadDiagnosticsFromPage() {
         seen.add(target);
 
         const label = normalizeText([labelFor(target), labelFor(node)].join(' '));
-        const special = node.matches?.('.hidden-local-file-image-selector-button, [xapfileselectortrigger]')
-            || target.matches?.('.hidden-local-file-image-selector-button, [xapfileselectortrigger]');
+        const special = node.matches?.('.hidden-local-file-upload-button, .hidden-local-upload-button, .hidden-local-file-image-selector-button, [xapfileselectortrigger]')
+            || target.matches?.('.hidden-local-file-upload-button, .hidden-local-upload-button, .hidden-local-file-image-selector-button, [xapfileselectortrigger]');
         const fileInput = target.matches?.('input[type="file"]');
         const iconName = String(node.getAttribute?.('data-mat-icon-name') || target.querySelector?.('mat-icon')?.getAttribute?.('data-mat-icon-name') || '');
         const historyAction = isHistoryActionMenu(target, label, iconName);
