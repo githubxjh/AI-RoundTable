@@ -2,25 +2,27 @@
 
 ## TL;DR
 
-Current product direction is Lite-first. The user decided to pause unified attachment upload and Advanced/local attachment work for the next few months. Do not change Advanced code, rebuild Advanced packages, or run Advanced live attachment tests unless the user explicitly reopens that line. Treat attachments as not user-facing; prioritize the Lite/public extension, stable text broadcast, review/routing flow, and low-permission sharing.
+Current product direction is Lite-first. Unified attachment upload and Advanced/local attachment work are paused for the next few months. The active verified line is Lite/public pure-text: `output/public-release/AI-RoundTable-extension-test`, including a temporary 9333 Lite launcher that reuses the old Advanced profile login state but verifies the package is still Lite.
 
 ## Current Stop Line
 
-Latest user direction on 2026-05-30: no need to keep changing the Advanced version for attachment hiding; update the project documents so development focus moves fully to Lite/public, because the more complex Advanced version likely will not be touched for the next few months.
+Latest user direction on 2026-05-31: switch 9333 from the paused Advanced attachment line to a Lite public test line, use `output/public-release/AI-RoundTable-extension-test`, verify Lite pure-text single model and five-model group broadcast, and do not test attachments.
 
 ## Working Tree
 
-- Current task scope: Lite/public release package freshness and public release generation.
+- Current task scope: Lite/public 9333 launch support, live script support for `AI_RT_EXTENSION_PATH`, and deterministic five-model Lite pure-text validation.
+- Current source/test/doc changes: `package.json`, `scripts/lib/playwright_env.mjs`, `scripts/launch_lite_9333_chrome.mjs`, `scripts/test_live.mjs`, `scripts/test_group_broadcast.mjs`, `tests/playwright_env.test.mjs`, `tests/attachment_live_script.test.mjs`, `TESTING.md`, `docs/agent-continuity.md`, `docs/self-iteration.md`, `.claude/HANDOFF.md`.
 - Do not stage: `tools/browser-profile/chrome-user-data-advanced/...` profile/cache/session changes from earlier live Chrome testing.
 - Last completed attachment-code anchor before the Lite-focus docs update: `de9d7f9 fix: strictly block unconfirmed attachments`.
 - Latest docs anchor before this task: `73d2380 docs: shift focus to Lite release`.
 
 ## Browser Boundary
 
-- Current Lite/public focus uses the normal extension and normal live text profile: `tools/browser-profile/chrome-user-data`.
-- Advanced attachment lab line remains historical/internal only: CDP port `9333`, profile `tools/browser-profile/chrome-user-data-advanced`, package `output/advanced-release/AI-RoundTable-advanced`.
+- Default Lite/public focus normally uses the normal text profile: `tools/browser-profile/chrome-user-data`.
+- Lite 9333 text validation is now available for this machine when 9333 login state is useful: `cmd /c npm.cmd run test:chrome:launch:lite9333` loads `output/public-release/AI-RoundTable-extension-test` on port `9333` with `tools/browser-profile/chrome-user-data-advanced` and verifies the manifest has no `debugger` / `downloads`.
+- Advanced attachment lab line remains historical/internal only. If it is ever explicitly reopened, do not confuse it with Lite 9333: Advanced uses `output/advanced-release/AI-RoundTable-advanced` and attachment-specific scripts.
 - Do not touch port `9222`; this machine has used it for the Danaher upload project.
-- Do not run live browser tests for this docs-only scope.
+- Do not close the user's daily Chrome unless explicitly authorized.
 
 ## Verified Evidence
 
@@ -42,6 +44,14 @@ Latest user direction on 2026-05-30: no need to keep changing the Advanced versi
 - `cmd /c npm.cmd run test:helpers` passed after the retry fix.
 - `cmd /c npm.cmd run release:public` passed after the retry fix; hash check passed for background, side panel, and all five content adapters in `output/public-release/AI-RoundTable-extension-test`.
 - Normal `test:chrome:launch` live reproduction did not run because Chrome was already open; detected 9222 belongs to the Danaher profile and 9333 belongs to the paused Advanced profile. Do not close those without user confirmation.
+- 2026-05-31 Lite 9333 implementation added `test:chrome:launch:lite9333`; launch verified 9333 command line uses `tools/browser-profile/chrome-user-data-advanced` and loads `output/public-release/AI-RoundTable-extension-test`.
+- Public Lite manifest check passed: permissions are `["sidePanel","tabs","storage","scripting"]`, with no `debugger` or `downloads`.
+- Public Lite package hash check passed for `manifest.json`, `src/background/service_worker.js`, `src/sidepanel/panel.js`, and all five text adapters.
+- Initial five-model single live run had one transient ChatGPT page-close failure, then `cmd /c npm.cmd run test:live -- ChatGPT` passed.
+- Initial group broadcast reused stale launcher tabs; Doubao showed `send_not_confirmed` and screenshots showed stale/page-error states. Root cause: group live script reused existing tabs instead of fresh test tabs.
+- `scripts/test_group_broadcast.mjs` now opens fresh tabs for each requested model before sending the BROADCAST.
+- `node scripts\test_group_broadcast.mjs ChatGPT Gemini Grok Doubao DeepSeek` passed on Lite 9333: `sentModels` contained all five models, `failed[]` was empty, and every model state settled to `idle` with `LIVE_OK`. Evidence: `output/playwright/broadcast-live/broadcast.log`, `output/playwright/broadcast-live/summary.json`, screenshots in `output/playwright/broadcast-live/`.
+- `cmd /c npm.cmd run test:live -- ChatGPT Gemini Grok Doubao DeepSeek` passed on Lite 9333 after the fresh-tab group fix. Evidence: `output/playwright/live/live.log`, `output/playwright/live/results.json`.
 
 ## Not Proven
 
@@ -49,13 +59,15 @@ Latest user direction on 2026-05-30: no need to keep changing the Advanced versi
 - Five-model attachment broadcast is not proven.
 - ChatGPT, Grok, Doubao, and DeepSeek automated attachment upload remain unproven.
 - Gemini Advanced had previous CDP evidence, but that does not make daily Chrome or Lite/public attachment upload ready for users.
+- Lite public pure-text single and group live are proven only for the current 9333 test profile/session as of 2026-05-31; live sites can still drift.
 
 ## Next Safe Steps
 
 1. Keep Lite/public as the default build, docs, and test target.
-2. To test the regenerated Lite package in Chrome, go to `chrome://extensions`, click reload on AI RoundTable, and refresh/open a fresh Gemini tab. If Chrome does not pick up the changed files, remove and load unpacked again from `C:\Users\xiepro\Desktop\AI-RoundTable\output\public-release\AI-RoundTable-extension-test`.
-3. For user-facing docs or release notes, say attachments are currently not supported for automatic broadcast; advise users to paste important content directly into the prompt.
-4. If future attachment work returns, start with a new explicit plan and decide whether Lite-side text extraction is better than Web UI file upload automation.
+2. For Lite 9333 validation, run `cmd /c npm.cmd run release:public`, `cmd /c npm.cmd run test:chrome:launch:lite9333`, then set `AI_RT_CDP_PORT=9333`, `AI_RT_TEST_PROFILE_DIR=C:\Users\xiepro\Desktop\AI-RoundTable\tools\browser-profile\chrome-user-data-advanced`, and `AI_RT_EXTENSION_PATH=C:\Users\xiepro\Desktop\AI-RoundTable\output\public-release\AI-RoundTable-extension-test` before `test:live` or `test:live:group`.
+3. Group live tests should use fresh tabs; do not reintroduce stale-tab reuse unless the script also proves the chosen tab is clean and current.
+4. For user-facing docs or release notes, say attachments are currently not supported for automatic broadcast; advise users to paste important content directly into the prompt.
+5. If future attachment work returns, start with a new explicit plan and decide whether Lite-side text extraction is better than Web UI file upload automation.
 
 ## Do Not Do
 
@@ -64,3 +76,4 @@ Latest user direction on 2026-05-30: no need to keep changing the Advanced versi
 - Do not restart Advanced attachment debugging without an explicit user request.
 - Do not claim attachment success from model replies, UI appearance, or old memory.
 - Do not use destructive Git cleanup to remove Chrome profile noise.
+- Do not stage `tools/browser-profile/...` or `output/playwright/...` live artifacts unless the user explicitly asks for evidence artifacts in Git.

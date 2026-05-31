@@ -14,6 +14,10 @@ const advancedLaunchSource = fs.readFileSync(
     path.join(process.cwd(), 'scripts', 'launch_advanced_chrome.mjs'),
     'utf8'
 );
+const lite9333LaunchSource = fs.readFileSync(
+    path.join(process.cwd(), 'scripts', 'launch_lite_9333_chrome.mjs'),
+    'utf8'
+);
 const groupBroadcastSource = fs.readFileSync(
     path.join(process.cwd(), 'scripts', 'test_group_broadcast.mjs'),
     'utf8'
@@ -121,6 +125,19 @@ runTest('advanced chrome launcher does not clear profile caches before checking 
     );
 });
 
+runTest('lite 9333 launcher uses the public Lite package and rejects Advanced permissions', () => {
+    assert.equal(
+        packageJson.scripts['test:chrome:launch:lite9333'],
+        'node scripts/launch_lite_9333_chrome.mjs'
+    );
+    assert.match(lite9333LaunchSource, /DEFAULT_ADVANCED_CDP_PORT/);
+    assert.match(lite9333LaunchSource, /AI_RT_CDP_PORT:\s*String\(DEFAULT_ADVANCED_CDP_PORT\)/);
+    assert.match(lite9333LaunchSource, /public-release.+AI-RoundTable-extension-test/s);
+    assert.match(lite9333LaunchSource, /AI_RT_TEST_PROFILE_DIR:.+AI_RT_ADVANCED_TEST_PROFILE_DIR/s);
+    assert.match(lite9333LaunchSource, /permissions\.has\('debugger'\) \|\| permissions\.has\('downloads'\)/);
+    assert.match(lite9333LaunchSource, /Lite extension is not active/);
+});
+
 runTest('group broadcast script verifies one BROADCAST reaches every requested model', () => {
     assert.equal(
         packageJson.scripts['test:live:group'],
@@ -134,7 +151,12 @@ runTest('group broadcast script verifies one BROADCAST reaches every requested m
     assert.match(groupBroadcastSource, /timeoutMs:\s*90000/);
     assert.match(groupBroadcastSource, /responseFailures/);
     assert.match(groupBroadcastSource, /live_token_missing/);
-    assert.match(groupBroadcastSource, /advancedAutomationUserDataDir/);
+    assert.match(groupBroadcastSource, /expectedProfileRoot = paths\.automationUserDataDir/);
+    assert.match(groupBroadcastSource, /repoRoot: paths\.extensionPath/);
+    assert.match(groupBroadcastSource, /preferencesPath: paths\.automationPreferencesPath/);
+    assert.match(groupBroadcastSource, /broadcast:open:fresh/);
+    assert.doesNotMatch(groupBroadcastSource, /findModelPage/);
+    assert.doesNotMatch(groupBroadcastSource, /output.+advanced-release.+AI-RoundTable-advanced/s);
 });
 
 runTest('background routes prepared Gemini file chooser uploads through the CDP chooser path', () => {

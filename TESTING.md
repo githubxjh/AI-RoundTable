@@ -33,6 +33,7 @@
 普通 live 文本验证是当前主线；Advanced 附件验证已暂停为内部实验线：
 
 - 普通文本 live：`tools/browser-profile/chrome-user-data`
+- Lite 9333 文本验证（需要复用 9333 登录态时）：`tools/browser-profile/chrome-user-data-advanced` + `output/public-release/AI-RoundTable-extension-test` + `test:chrome:launch:lite9333`
 - Advanced 附件 live（仅显式恢复实验时使用）：`tools/browser-profile/chrome-user-data-advanced`、`output/advanced-release/AI-RoundTable-advanced`、默认端口 `9333`
 
 不要把 Advanced 附件问题拿普通 root/Lite 扩展证明，也不要把普通文本群发结果当附件上传成功。
@@ -105,6 +106,7 @@ cmd /c npm.cmd run test:smoke
 cmd /c npm.cmd run test:smoke:headless
 cmd /c npm.cmd run test:all
 cmd /c npm.cmd run test:chrome:launch
+cmd /c npm.cmd run test:chrome:launch:lite9333
 cmd /c npm.cmd run test:live:setup
 cmd /c npm.cmd run test:live:core
 cmd /c npm.cmd run test:live:gpt
@@ -126,6 +128,20 @@ node scripts\test_attachment.mjs ChatGPT Gemini Grok Doubao DeepSeek
 ```powershell
 cmd /c npm.cmd run test:live:group
 ```
+
+如果使用 Lite 9333 会话验证 public 包，先运行 `cmd /c npm.cmd run release:public`，再运行：
+
+```powershell
+cmd /c npm.cmd run test:chrome:launch:lite9333
+$repo = (Get-Location).Path
+$env:AI_RT_CDP_PORT = "9333"
+$env:AI_RT_TEST_PROFILE_DIR = Join-Path $repo "tools\browser-profile\chrome-user-data-advanced"
+$env:AI_RT_EXTENSION_PATH = Join-Path $repo "output\public-release\AI-RoundTable-extension-test"
+cmd /c npm.cmd run test:live -- ChatGPT Gemini Grok Doubao DeepSeek
+cmd /c npm.cmd run test:live:group -- ChatGPT Gemini Grok Doubao DeepSeek
+```
+
+Lite 9333 只是为了复用这个 profile 的登录态；启动脚本会校验 manifest 不含 `debugger` / `downloads`。它不是 Advanced 附件验证。
 
 Windows 双击 / 命令行友好入口：
 

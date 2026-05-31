@@ -79,6 +79,7 @@ If two iterations produce no new evidence, or 30-45 minutes pass without narrowi
 There are two different browser lines, but only the Lite/public line is active by default:
 
 - Normal attach/live text checks use the dedicated AI-RoundTable profile under `tools/browser-profile/chrome-user-data`.
+- Lite 9333 text checks are allowed when the user explicitly wants to reuse the 9333 login state: run `test:chrome:launch:lite9333`, which loads `output/public-release/AI-RoundTable-extension-test` on port `9333` with `tools/browser-profile/chrome-user-data-advanced`, and verifies the manifest has no `debugger` / `downloads`.
 - Advanced attachment checks are paused/internal only. If the user explicitly reopens that experiment, they use `tools/browser-profile/chrome-user-data-advanced`, the package `output/advanced-release/AI-RoundTable-advanced`, and CDP port `9333`.
 
 Do not kill or reuse another project's Chrome. On this machine, port `9222` has previously belonged to `D:\丹纳赫实施资料上传\.chrome-upload-profile`. If a Chrome process is not clearly the AI-RoundTable profile and expected port, stop and report it.

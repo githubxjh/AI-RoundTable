@@ -132,6 +132,7 @@ runTest('explicit environment overrides win over defaults', () => {
             AI_RT_CHROME_EXE: 'D:\\Apps\\Chrome\\chrome.exe',
             AI_RT_CHROME_FOR_TESTING_EXE: 'D:\\Apps\\Chrome for Testing\\chrome.exe',
             AI_RT_CHROME_USER_DATA_SOURCE: 'D:\\Profiles\\Chrome User Data',
+            AI_RT_EXTENSION_PATH: 'D:\\Packages\\AI-RoundTable-Lite',
             AI_RT_TEST_PROFILE_DIR: 'D:\\Automation\\AI RoundTable Profile',
             AI_RT_ADVANCED_TEST_PROFILE_DIR: 'D:\\Automation\\AI RoundTable Advanced Profile',
             AI_RT_CDP_PORT: '9333',
@@ -141,6 +142,7 @@ runTest('explicit environment overrides win over defaults', () => {
 
     assert.equal(paths.automationBrowserChannel, 'chrome-beta');
     assert.equal(paths.chromeExecutable, 'D:\\Apps\\Chrome\\chrome.exe');
+    assert.equal(paths.extensionPath, 'D:\\Packages\\AI-RoundTable-Lite');
     assert.equal(paths.chromeUserDataSource, 'D:\\Profiles\\Chrome User Data');
     assert.equal(paths.chromeProfileName, 'Profile 7');
     assert.equal(paths.profileSourceDir, 'D:\\Profiles\\Chrome User Data\\Profile 7');

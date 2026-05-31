@@ -84,10 +84,15 @@ export function buildTestingPaths({
     const advancedAutomationProfileDir = path.join(advancedAutomationUserDataDir, automationProfileName);
     const artifactDir = path.join(resolvedRepoRoot, 'output', 'playwright');
     const cdpPort = normalizeCdpPort(env.AI_RT_CDP_PORT, defaultCdpPort);
+    const extensionPath = resolvePathLike(
+        env.AI_RT_EXTENSION_PATH,
+        resolvedRepoRoot,
+        resolvedRepoRoot
+    );
 
     return {
         repoRoot: resolvedRepoRoot,
-        extensionPath: resolvedRepoRoot,
+        extensionPath,
         automationBrowserChannel,
         chromeExecutable,
         chromeUserDataSource,

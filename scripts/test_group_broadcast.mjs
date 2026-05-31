@@ -64,7 +64,7 @@ try {
     const context = attached.context;
     attachContextDiagnostics(context, { logger });
 
-    const expectedProfileRoot = paths.advancedAutomationUserDataDir;
+    const expectedProfileRoot = paths.automationUserDataDir;
     await assertAttachedChromeTarget(context, {
         expectedUserDataDir: expectedProfileRoot,
         expectedCdpPort: paths.cdpPort,
@@ -73,10 +73,10 @@ try {
 
     const extensionId = await resolveAttachedExtensionId({
         context,
-        repoRoot: path.join(paths.repoRoot, 'output', 'advanced-release', 'AI-RoundTable-advanced'),
+        repoRoot: paths.extensionPath,
         profileName: `${paths.automationProfileName} @ ${expectedProfileRoot}`,
-        preferencesPath: paths.advancedAutomationPreferencesPath,
-        securePreferencesPath: paths.advancedAutomationSecurePreferencesPath
+        preferencesPath: paths.automationPreferencesPath,
+        securePreferencesPath: paths.automationSecurePreferencesPath
     });
 
     const panelPage = await openExtensionPanel(context, extensionId, { logger });
@@ -94,16 +94,13 @@ try {
 
     const pagesByModel = new Map();
     for (const model of requestedModels) {
-        let page = findModelPage(context, model);
-        if (!page) {
-            page = await context.newPage();
-            logger.log(`broadcast:open ${model} ${MODEL_URLS[model]}`);
-            await page.goto(MODEL_URLS[model], {
-                waitUntil: 'domcontentloaded',
-                timeout: 60000
-            });
-            await page.waitForTimeout(5000);
-        }
+        const page = await context.newPage();
+        logger.log(`broadcast:open:fresh ${model} ${MODEL_URLS[model]}`);
+        await page.goto(MODEL_URLS[model], {
+            waitUntil: 'domcontentloaded',
+            timeout: 60000
+        });
+        await page.waitForTimeout(5000);
         pagesByModel.set(model, page);
     }
 
@@ -167,18 +164,6 @@ try {
     process.exitCode = 1;
 } finally {
     await closeBrowserQuietly(browser);
-}
-
-function findModelPage(context, model) {
-    return context.pages().find((page) => {
-        const url = String(page.url() || '');
-        if (model === 'ChatGPT') return url.includes('chatgpt.com');
-        if (model === 'Gemini') return url.includes('gemini.google.com');
-        if (model === 'Grok') return url.includes('grok.com');
-        if (model === 'Doubao') return url.includes('doubao.com/chat');
-        if (model === 'DeepSeek') return url.includes('chat.deepseek.com');
-        return false;
-    }) || null;
 }
 
 function classifyGroupBroadcast(summary) {

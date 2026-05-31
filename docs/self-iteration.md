@@ -111,6 +111,7 @@ cmd /c npm.cmd run iterate:live
 跑真实群发 live 前，先确认当前 attach Chrome 是正确浏览器，而不是别的项目占用的 CDP 端口。普通文本 live 和暂停的 Advanced 附件 live 的 profile 不同：
 
 - 普通文本 live：`tools\browser-profile\chrome-user-data`
+- Lite 9333 文本验证：`tools\browser-profile\chrome-user-data-advanced` + `output\public-release\AI-RoundTable-extension-test`，只在需要复用 9333 登录态时用 `cmd /c npm.cmd run test:chrome:launch:lite9333`
 - Advanced 附件 live（暂停，仅显式恢复实验时）：`tools\browser-profile\chrome-user-data-advanced`
 
 ```powershell

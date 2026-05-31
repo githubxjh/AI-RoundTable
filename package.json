@@ -9,6 +9,7 @@
     "test:profile:init": "node scripts/init_browser_profile.mjs",
     "test:profile:open": "node scripts/open_browser_profile.mjs",
     "test:chrome:launch": "node scripts/launch_real_chrome.mjs",
+    "test:chrome:launch:lite9333": "node scripts/launch_lite_9333_chrome.mjs",
     "test:chrome:launch:advanced": "node scripts/launch_advanced_chrome.mjs",
     "test:live:setup": "node scripts/launch_real_chrome.mjs",
     "test:smoke": "node scripts/test_smoke.mjs",

@@ -78,7 +78,7 @@ try {
 
     const extensionId = await resolveAttachedExtensionId({
         context,
-        repoRoot: paths.repoRoot,
+        repoRoot: paths.extensionPath,
         profileName: `${paths.automationProfileName} @ ${paths.automationUserDataDir}`,
         preferencesPath: paths.automationPreferencesPath,
         securePreferencesPath: paths.automationSecurePreferencesPath
