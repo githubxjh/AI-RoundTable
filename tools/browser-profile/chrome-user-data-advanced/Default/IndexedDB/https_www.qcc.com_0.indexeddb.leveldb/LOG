@@ -1,6 +1,0 @@
-2026/03/19-21:32:14.493 33f4 Creating DB C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_www.qcc.com_0.indexeddb.leveldb since it was missing.
-2026/03/19-21:32:14.503 33f4 Reusing MANIFEST C:\Users\xiepro\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_www.qcc.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/03/19-21:32:14.519 85d8 Level-0 table #5: started
-2026/03/19-21:32:14.523 85d8 Level-0 table #5: 1073 bytes OK
-2026/03/19-21:32:14.526 85d8 Delete type=0 #3
-2026/03/19-21:32:14.527 33f4 Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)
